@@ -37,7 +37,7 @@ private struct DetailEditor: View {
     @State private var showRelocate = false
     @State private var confirmInstall = false
     @State private var confirmDelete = false
-    @State private var showPreview = false
+    @State private var showPreview = true
     @State private var saveState: NoteSaveState = .idle
     @State private var saveTask: Task<Void, Never>?
     @State private var actionMessage: String?
@@ -276,8 +276,8 @@ private struct DetailEditor: View {
                         .foregroundStyle(.secondary)
                 }
                 Picker("模式", selection: $showPreview) {
-                    Text("编辑").tag(false)
                     Text("预览").tag(true)
+                    Text("编辑").tag(false)
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 116)
