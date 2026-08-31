@@ -90,29 +90,38 @@ struct ArchitectureBadge: View {
     }
 }
 
-/// 标签小胶囊。
+/// 标签小胶囊。悬停时高亮，删除按钮更明显、更好点。
 struct TagChip: View {
     let name: String
-    var isRemovable = false
     var onRemove: (() -> Void)?
+
+    @State private var hovered = false
 
     var body: some View {
         HStack(spacing: 4) {
             Text(name)
-            if isRemovable {
+            if onRemove != nil {
                 Button {
                     onRemove?()
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.system(size: 10, weight: .bold))
                 }
                 .buttonStyle(.plain)
+                .opacity(hovered ? 1 : 0.5)
             }
         }
         .font(.caption)
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
-        .background(.quaternary.opacity(0.6), in: Capsule())
+        .background(
+            (onRemove != nil && hovered ? Color.accentColor : Color.primary)
+                .opacity((onRemove != nil && hovered) ? 0.14 : 0.06),
+            in: Capsule()
+        )
+        .foregroundStyle((onRemove != nil && hovered) ? Color.accentColor : .primary)
+        .onHover { hovered = $0 }
+        .animation(.easeInOut(duration: 0.12), value: hovered)
     }
 }
 

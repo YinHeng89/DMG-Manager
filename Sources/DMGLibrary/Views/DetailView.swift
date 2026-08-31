@@ -257,11 +257,14 @@ private struct DetailEditor: View {
     }
 
     // MARK: - 备注
+    //
+    // 编辑 / 预览 两种状态互斥：预览态只读（不可编辑），编辑态才是文本框。
 
     private var noteSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                SectionHeader(title: "备注", symbol: "note.text")
+            HStack(spacing: 6) {
+                Image(systemName: "note.text").foregroundStyle(.secondary)
+                Text("备注").font(.headline)
                 Spacer()
                 if saveState == .saved {
                     Label("已保存", systemImage: "checkmark.circle.fill")
@@ -271,31 +274,42 @@ private struct DetailEditor: View {
                     Label("保存中…", systemImage: "arrow.triangle.2.circlepath")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
-                } else if saveState == .idle {
-                    Text("自动保存").font(.caption2).foregroundStyle(.tertiary)
                 }
-                Toggle("预览", isOn: $showPreview)
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .font(.caption)
+                Picker("模式", selection: $showPreview) {
+                    Text("编辑").tag(false)
+                    Text("预览").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 116)
+                .controlSize(.small)
             }
 
-            TextEditor(text: $draft.note)
-                .font(.system(.body, design: .monospaced))
-                .frame(minHeight: 120)
-                .padding(6)
-                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(saveState == .saving ? Color.accentColor.opacity(0.4) : .clear, lineWidth: 1)
-                )
-                .onChange(of: draft.note) { scheduleSave() }
-
-            if showPreview, let rendered = renderedNote {
-                Text(rendered)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
-                    .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
+            if showPreview {
+                // 预览态：只读渲染，不出现任何编辑框
+                if let rendered = renderedNote {
+                    Text(rendered)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+                } else {
+                    Text(draft.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "暂无备注" : draft.note)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+                }
+            } else {
+                // 编辑态：可编辑文本框 + 自动保存
+                TextEditor(text: $draft.note)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(minHeight: 120)
+                    .padding(6)
+                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(saveState == .saving ? Color.accentColor.opacity(0.4) : .clear, lineWidth: 1)
+                    )
+                    .onChange(of: draft.note) { scheduleSave() }
             }
         }
     }
@@ -309,42 +323,55 @@ private struct DetailEditor: View {
     }
 
     // MARK: - 标签
+    //
+    // 交互优化：当前标签以可删除胶囊呈现；末尾是一个明显的「添加」输入框
+    // （回车即添加）；下方「常用标签」用带 + 的胶囊一键追加，与现有标签视觉统一。
 
     private var tagsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let suggestions = store.tagCounts
+            .map(\.name)
+            .filter { !draft.tags.contains($0) }
+
+        return VStack(alignment: .leading, spacing: 8) {
             SectionHeader(title: "标签", symbol: "tag")
 
             FlowLayout(spacing: 6) {
                 ForEach(draft.tags, id: \.self) { tag in
-                    TagChip(name: tag, isRemovable: true) {
-                        draft.tags.removeAll { $0 == tag }
-                        save()
-                    }
+                    TagChip(name: tag) { removeTag(tag) }
                 }
 
-                TextField("添加标签", text: $newTag)
-                    .textFieldStyle(.plain)
-                    .frame(width: 96)
-                    .onSubmit {
-                        addTag()
-                    }
+                HStack(spacing: 4) {
+                    Image(systemName: "plus")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    TextField("添加标签，回车确认", text: $newTag)
+                        .textFieldStyle(.plain)
+                        .onSubmit(addTag)
+                }
+                .font(.caption)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Color.primary.opacity(0.06), in: Capsule())
+                .frame(minWidth: 132)
             }
 
-            if !store.tagCounts.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(store.tagCounts.prefix(12), id: \.name) { entry in
-                            Button(entry.name) {
-                                if !draft.tags.contains(entry.name) {
-                                    draft.tags.append(entry.name)
-                                    save()
-                                }
+            if !suggestions.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("常用标签")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    FlowLayout(spacing: 6) {
+                        ForEach(suggestions.prefix(16), id: \.self) { name in
+                            Button {
+                                addExistingTag(name)
+                            } label: {
+                                Label(name, systemImage: "plus")
+                                    .font(.caption)
                             }
                             .buttonStyle(.plain)
-                            .font(.caption)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
-                            .background(.quaternary.opacity(0.4), in: Capsule())
+                            .background(Color.primary.opacity(0.06), in: Capsule())
                         }
                     }
                 }
@@ -358,8 +385,19 @@ private struct DetailEditor: View {
             newTag = ""
             return
         }
-        draft.tags.append(tag)
+        withAnimation { draft.tags.append(tag) }
         newTag = ""
+        save()
+    }
+
+    private func addExistingTag(_ name: String) {
+        guard !draft.tags.contains(name) else { return }
+        withAnimation { draft.tags.append(name) }
+        save()
+    }
+
+    private func removeTag(_ tag: String) {
+        withAnimation { draft.tags.removeAll { $0 == tag } }
         save()
     }
 
