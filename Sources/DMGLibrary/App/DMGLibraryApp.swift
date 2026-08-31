@@ -2,11 +2,10 @@ import SwiftUI
 
 struct DMGLibraryApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var store: LibraryStore? = LibraryStore.bootstrap()
 
     var body: some Scene {
         WindowGroup {
-            RootView(store: $store)
+            RootView()
         }
         .windowToolbarStyle(.unified)
         .defaultSize(width: 1180, height: 760)
@@ -32,21 +31,17 @@ struct DMGLibraryApp: App {
         }
 
         MenuBarExtra("DMG Library", systemImage: "opticaldisc") {
-            if let store {
+            StoreContainer { store in
                 MenuBarView()
                     .environment(store)
-            } else {
-                Text("数据库未就绪")
             }
         }
         .menuBarExtraStyle(.menu)
 
         Settings {
-            if let store {
+            StoreContainer { store in
                 SettingsView()
                     .environment(store)
-            } else {
-                Text("数据库未就绪")
             }
         }
     }
@@ -63,9 +58,24 @@ extension LibraryStore {
     }
 }
 
+/// 把全局唯一的 store 注入子视图，未就绪时显示占位。
+@MainActor
+struct StoreContainer<Content: View>: View {
+    @ViewBuilder var content: (LibraryStore) -> Content
+
+    var body: some View {
+        if let store = AppState.store {
+            content(store)
+        } else {
+            Text("数据库未就绪")
+        }
+    }
+}
+
 /// 根视图：负责启动失败时的兜底展示。
+@MainActor
 struct RootView: View {
-    @Binding var store: LibraryStore?
+    @State private var store: LibraryStore? = AppState.store
 
     var body: some View {
         Group {
@@ -81,6 +91,11 @@ struct RootView: View {
             }
         }
         .frame(minWidth: 900, minHeight: 600)
+        .task {
+            // Store 可能还没由 AppDelegate 创建好（冷启动传文件场景）
+            AppState.bootstrapIfNeeded()
+            store = AppState.store
+        }
     }
 }
 

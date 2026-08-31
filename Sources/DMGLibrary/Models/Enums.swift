@@ -54,7 +54,8 @@ let CPU_TYPE_ARM64: UInt32 = 0x0100_000C
 
 /// DMG 解析结果。
 enum ParseStatus: String, Codable, CaseIterable {
-    case pending    // 排队中
+    case pending    // 已入库，排队等待解析
+    case parsing    // 正在挂载 / 读取中
     case parsed     // 已解析出 App
     case noApp      // 挂载成功但里面没有 .app（可能是驱动包 / 数据包）
     case failed     // 挂载或读取失败（加密、损坏…）
@@ -62,7 +63,8 @@ enum ParseStatus: String, Codable, CaseIterable {
 
     var displayName: String {
         switch self {
-        case .pending: return "待解析"
+        case .pending: return "等待解析"
+        case .parsing: return "解析中"
         case .parsed: return "已解析"
         case .noApp: return "无 App"
         case .failed: return "解析失败"
@@ -73,11 +75,16 @@ enum ParseStatus: String, Codable, CaseIterable {
     var symbolName: String {
         switch self {
         case .pending: return "clock"
+        case .parsing: return "arrow.triangle.2.circlepath"
         case .parsed: return "checkmark.circle.fill"
         case .noApp: return "doc.circle"
         case .failed: return "exclamationmark.triangle.fill"
         case .missing: return "questionmark.folder.fill"
         }
+    }
+
+    var isResolved: Bool {
+        self == .parsed || self == .noApp || self == .failed || self == .missing
     }
 }
 

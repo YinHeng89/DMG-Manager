@@ -35,7 +35,13 @@ final class LibraryStore {
 
     // MARK: - 导入状态
 
+    enum ImportStage: String {
+        case adding
+        case parsing
+    }
+
     var isImporting = false
+    var importStage: ImportStage = .adding
     var importCompleted = 0
     var importTotal = 0
     var importStatusMessage = ""
@@ -122,16 +128,37 @@ final class LibraryStore {
         }
 
         isImporting = true
-        importCompleted = 0
-        importTotal = dmgURLs.count
         defer {
             isImporting = false
             importStatusMessage = ""
         }
 
+        // 阶段 1：快速入库（只读文件属性，不挂载）
+        importStage = .adding
+        importCompleted = 0
+        importTotal = dmgURLs.count
+        var addedIDs: [Int64] = []
+
         for url in dmgURLs {
             importStatusMessage = url.lastPathComponent
-            await importOne(url)
+            if let item = await addPlaceholder(url) {
+                addedIDs.append(item.id)
+            }
+            importCompleted += 1
+        }
+
+        guard !addedIDs.isEmpty else {
+            reload()
+            return
+        }
+
+        // 阶段 2：逐个挂载解析
+        importStage = .parsing
+        importCompleted = 0
+        importTotal = addedIDs.count
+
+        for id in addedIDs {
+            await parseOne(id: id)
             importCompleted += 1
         }
 
@@ -139,9 +166,10 @@ final class LibraryStore {
         await computeMissingHashes()
     }
 
-    private func importOne(_ url: URL) async {
+    /// 只把文件信息写入库，状态为 pending，不触发挂载解析。
+    private func addPlaceholder(_ url: URL) async -> DMGItem? {
         if (try? repository.itemID(forPath: url.path)) != nil {
-            return // 已经导入过
+            return nil // 已经导入过
         }
 
         let facts = FileFactsReader.read(url: url)
@@ -161,22 +189,42 @@ final class LibraryStore {
         do {
             try repository.insert(&item)
         } catch {
-            return
+            return nil
         }
         items.append(item)
+        return item
+    }
 
+    /// 解析单个条目：pending → parsing → parsed / noApp / failed / missing。
+    private func parseOne(id: Int64) async {
+        guard var item = item(id: id), item.parseStatus == .pending || item.parseStatus == .parsed else {
+            return
+        }
+        guard item.exists else {
+            item.parseStatus = .missing
+            item.parseError = "原始文件已不存在"
+            save(item)
+            return
+        }
+
+        item.parseStatus = .parsing
+        item.parseError = nil
+        importStatusMessage = item.filename
+        try? repository.update(item)
+        upsert(item)
+
+        let url = item.fileURL
         let iconName = UUID().uuidString
         let result = await Task.detached(priority: .utility) {
             DMGInspectionService.inspect(fileURL: url, iconName: iconName)
         }.value
+        IconStore.shared.delete(named: item.iconFilename)
         DMGInspectionService.apply(result, to: &item)
         item.iconFilename = result.iconFilename
 
-        // 首次导入：解析出的 App 名比文件名猜测更准，直接作为显示名
         if let appName = result.appInfo?.name, !appName.isEmpty {
             item.displayName = appName
         }
-
         if item.category == CategoryPresets.uncategorized, let appName = item.appName {
             item.category = SmartCategorizer.category(for: appName)
         }
@@ -270,26 +318,35 @@ final class LibraryStore {
 
     // MARK: - 后台维护
 
-    /// 重新解析选中的条目（例如之前解析失败）。
+    /// 重新解析选中的条目（例如之前解析失败或用户要求重试）。
     func reparse(ids: Set<Int64>) async {
-        for id in ids {
-            guard var item = item(id: id) else { continue }
-            guard item.exists else {
-                item.parseStatus = .missing
-                save(item)
-                continue
-            }
-            let url = item.fileURL
-            let iconName = UUID().uuidString
-            let result = await Task.detached(priority: .utility) {
-                DMGInspectionService.inspect(fileURL: url, iconName: iconName)
-            }.value
-            IconStore.shared.delete(named: item.iconFilename)
-            DMGInspectionService.apply(result, to: &item)
-            item.iconFilename = result.iconFilename
-            await resolveInstallStatus(for: &item)
-            save(item)
+        let targets = ids.compactMap { item(id: $0) }.filter { $0.parseStatus.isResolved || $0.parseStatus == .pending }
+        guard !targets.isEmpty else { return }
+
+        isImporting = true
+        importStage = .parsing
+        importTotal = targets.count
+        importCompleted = 0
+        defer {
+            isImporting = false
+            importStatusMessage = ""
         }
+
+        for item in targets {
+            var reset = item
+            reset.parseStatus = .pending
+            reset.parseError = nil
+            try? repository.update(reset)
+            upsert(reset)
+        }
+
+        for id in targets.map(\.id) {
+            await parseOne(id: id)
+            importCompleted += 1
+        }
+
+        reload()
+        await computeMissingHashes()
     }
 
     /// 启动时的文件状态检查：失联的尝试自动重连。

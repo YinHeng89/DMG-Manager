@@ -133,14 +133,13 @@ struct ItemRow: View {
 struct ItemGridView: View {
     @Environment(LibraryStore.self) private var store
 
-    private let columns = [GridItem(.adaptive(minimum: 112, maximum: 160), spacing: 16)]
+    private let columns = [GridItem(.adaptive(minimum: 150, maximum: 220), spacing: 18)]
 
     var body: some View {
         ScrollView {
             LazyVGrid(columns: columns, spacing: 18) {
                 ForEach(store.filteredItems) { item in
                     GridCard(item: item, isSelected: store.selectedItemID == item.id)
-                        .onTapGesture { store.selectedItemID = item.id }
                         .contextMenu {
                             Button("打开 DMG") { store.open(item) }
                             Button("在 Finder 中显示") { store.revealInFinder(item) }
@@ -155,6 +154,7 @@ struct ItemGridView: View {
 
 struct GridCard: View {
     @Environment(LibraryStore.self) private var store
+    @State private var isHovered = false
     let item: DMGItem
     let isSelected: Bool
 
@@ -166,7 +166,9 @@ struct GridCard: View {
                     Image(systemName: "star.fill")
                         .font(.caption2)
                         .foregroundStyle(.yellow)
-                        .offset(x: 4, y: -4)
+                        .padding(3)
+                        .background(.thickMaterial, in: Circle())
+                        .overlay(Circle().strokeBorder(.quaternary, lineWidth: 0.5))
                 }
             }
 
@@ -184,14 +186,26 @@ struct GridCard: View {
             StatusBadge(item: item)
         }
         .padding(10)
-        .frame(width: 132)
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(isSelected ? Color.accentColor.opacity(0.16) : Color.clear)
+                .fill(selectionFill)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(isSelected ? Color.accentColor : .clear, lineWidth: 1.5)
+                .strokeBorder(
+                    isSelected ? Color.accentColor : (isHovered ? Color.primary.opacity(0.2) : .clear),
+                    lineWidth: isSelected ? 2 : 1
+                )
         )
+        .onHover { isHovered = $0 }
+        .onTapGesture { store.selectedItemID = item.id }
+    }
+
+    private var selectionFill: Color {
+        if isSelected { return Color.accentColor.opacity(0.16) }
+        if isHovered { return Color.primary.opacity(0.05) }
+        return Color.clear
     }
 }

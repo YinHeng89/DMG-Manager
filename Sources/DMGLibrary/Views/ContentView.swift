@@ -1,14 +1,11 @@
 import SwiftUI
+import AppKit
 import UniformTypeIdentifiers
 
 struct ContentView: View {
     @Environment(LibraryStore.self) private var store
 
-    private let dmgTypes = [UTType.dmg]
-
     @State private var isSearching = false
-    @State private var showFileImporter = false
-    @State private var showFolderImporter = false
     @State private var showFilters = false
     @State private var showSettings = false
     @State private var pendingDeletion: Set<Int64> = []
@@ -36,23 +33,6 @@ struct ContentView: View {
         )
         .sheet(isPresented: $showFilters) { FilterPanelView() }
         .sheet(isPresented: $showSettings) { SettingsView() }
-        .fileImporter(
-            isPresented: $showFileImporter,
-            allowedContentTypes: dmgTypes,
-            allowsMultipleSelection: true
-        ) { (result: Result<[URL], Error>) in
-            if case .success(let urls) = result {
-                Task { await store.importFiles(urls) }
-            }
-        }
-        .fileImporter(
-            isPresented: $showFolderImporter,
-            allowedContentTypes: [.folder]
-        ) { (result: Result<URL, Error>) in
-            if case .success(let folder) = result {
-                Task { _ = await store.scanFolder(folder) }
-            }
-        }
         .confirmationDialog(
             "从资料库中移除",
             isPresented: Binding(
@@ -86,10 +66,10 @@ struct ContentView: View {
             handleDrop(providers)
         }
         .onReceive(NotificationCenter.default.publisher(for: .libraryAddFiles)) { _ in
-            showFileImporter = true
+            presentAddPanel()
         }
         .onReceive(NotificationCenter.default.publisher(for: .libraryScanFolder)) { _ in
-            showFolderImporter = true
+            presentScanPanel()
         }
         .onReceive(NotificationCenter.default.publisher(for: .libraryFocusSearch)) { _ in
             isSearching = true
@@ -104,19 +84,36 @@ struct ContentView: View {
         .task {
             await store.refreshFileStatus()
             await store.refreshInstallStatus()
-            await consumePendingOpenFiles()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .libraryOpenFiles)) { _ in
-            Task { await consumePendingOpenFiles() }
         }
     }
 
-    /// 消费 Finder「打开方式」传进来的 DMG。
-    private func consumePendingOpenFiles() async {
-        guard !AppDelegate.pendingURLs.isEmpty else { return }
-        let urls = AppDelegate.pendingURLs
-        AppDelegate.pendingURLs = []
-        await store.importFiles(urls)
+    // MARK: - 文件选择（NSOpenPanel 比 SwiftUI fileImporter 稳定）
+
+    /// 弹出系统文件选择器，批量添加 DMG。
+    private func presentAddPanel() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.allowedContentTypes = [.dmg]
+        panel.message = "选择要加入资料库的 DMG 文件"
+        panel.prompt = "添加"
+        guard panel.runModal() == .OK else { return }
+        let urls = panel.urls
+        guard !urls.isEmpty else { return }
+        Task { await store.importFiles(urls) }
+    }
+
+    /// 弹出文件夹选择器，递归扫描其中的 DMG。
+    private func presentScanPanel() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.message = "选择要扫描的文件夹"
+        panel.prompt = "扫描"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Task { _ = await store.scanFolder(url) }
     }
 
     // MARK: - 工具栏
@@ -125,7 +122,7 @@ struct ContentView: View {
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .primaryAction) {
             Button {
-                showFileImporter = true
+                presentAddPanel()
             } label: {
                 Label("添加", systemImage: "plus")
             }
@@ -135,7 +132,7 @@ struct ContentView: View {
         ToolbarItem(placement: .primaryAction) {
             Menu {
                 Button {
-                    showFolderImporter = true
+                    presentScanPanel()
                 } label: {
                     Label("扫描文件夹…", systemImage: "folder.badge.magnifyingglass")
                 }
@@ -249,10 +246,13 @@ struct BrowserPane: View {
 
             if store.filteredItems.isEmpty {
                 EmptyStateView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if store.browseMode == .list {
                 ItemListView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ItemGridView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -264,12 +264,29 @@ struct BrowserPane: View {
 struct ImportProgressBanner: View {
     @Environment(LibraryStore.self) private var store
 
+    private var stageTitle: String {
+        switch store.importStage {
+        case .adding: return "正在添加"
+        case .parsing: return "正在解析"
+        }
+    }
+
+    private var stageSymbol: String {
+        switch store.importStage {
+        case .adding: return "plus"
+        case .parsing: return "arrow.triangle.2.circlepath"
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 ProgressView()
                     .controlSize(.small)
-                Text("正在解析 \(store.importCompleted)/\(store.importTotal)")
+                Image(systemName: stageSymbol)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text("\(stageTitle) \(store.importCompleted)/\(store.importTotal)")
                     .font(.callout.weight(.medium))
                 Spacer()
             }

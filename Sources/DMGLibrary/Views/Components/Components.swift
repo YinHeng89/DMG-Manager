@@ -25,15 +25,23 @@ struct AppIconView: View {
     }
 }
 
-/// 安装状态 / 文件状态徽章。
+/// 解析状态 / 安装状态徽章。未解析完成时优先显示解析状态。
 struct StatusBadge: View {
     let item: DMGItem
 
     var body: some View {
         if !item.exists {
             badge("文件失联", symbol: "exclamationmark.triangle.fill", color: .orange)
+        } else if item.parseStatus == .parsing {
+            badge("解析中", symbol: "arrow.triangle.2.circlepath", color: .blue)
+        } else if item.parseStatus == .pending {
+            badge("等待解析", symbol: "clock", color: .secondary)
         } else if item.parseStatus == .failed {
             badge("解析失败", symbol: "exclamationmark.triangle.fill", color: .red)
+        } else if item.parseStatus == .missing {
+            badge("文件失联", symbol: "questionmark.folder.fill", color: .orange)
+        } else if item.parseStatus == .noApp {
+            badge("无 App", symbol: "doc.circle", color: .secondary)
         } else {
             switch item.installStatus {
             case .installed:

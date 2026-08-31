@@ -8,19 +8,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 应用还没完成启动时收到的文件，等主窗口就绪后再消费。
     static var pendingURLs: [URL] = []
 
+    /// 尽早挂上处理器：冷启动时 kAEOpenDocuments 可能在 App 初始化途中就到达，
+    /// 晚一步注册就会丢掉这次「打开方式」。
+    override init() {
+        super.init()
+        Self.installOpenDocumentsHandler(self)
+    }
+
     func applicationWillFinishLaunching(_ notification: Notification) {
-        let eventManager = NSAppleEventManager.shared()
-        eventManager.setEventHandler(
-            self,
+        Self.installOpenDocumentsHandler(self)
+        Self.collectFromCurrentAppleEvent()
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // 让主窗口在「打开方式」冷启动时也能正常出现
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        // 部分启动路径下事件此时才落到 currentAppleEvent，再兜一次
+        Self.collectFromCurrentAppleEvent()
+    }
+
+    private static func installOpenDocumentsHandler(_ target: AppDelegate) {
+        NSAppleEventManager.shared().setEventHandler(
+            target,
             andSelector: #selector(handleOpenDocuments(_:replyEvent:)),
             forEventClass: AEEventClass(kCoreEventClass),
             andEventID: AEEventID(kAEOpenDocuments)
         )
+    }
 
-        // 冷启动：事件在 delegate 就绪之前就已经到了
-        if let event = eventManager.currentAppleEvent, Self.isOpenDocuments(event) {
-            Self.append(Self.urlsFrom(event))
-        }
+    private static func collectFromCurrentAppleEvent() {
+        guard let event = NSAppleEventManager.shared().currentAppleEvent,
+              isOpenDocuments(event) else { return }
+        append(urlsFrom(event))
     }
 
     @objc private func handleOpenDocuments(
@@ -61,14 +81,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return [direct.fileURLValue].compactMap { $0 }
     }
 
+
     private static func append(_ urls: [URL]) {
         let dmgFiles = urls.filter { $0.pathExtension.lowercased() == "dmg" }
         guard !dmgFiles.isEmpty else { return }
         pendingURLs.append(contentsOf: dmgFiles)
-        NotificationCenter.default.post(name: .libraryOpenFiles, object: nil)
+        Self.drainPendingURLs()
+    }
+
+    /// 直接把文件交给 store，不等待窗口渲染。
+    static func drainPendingURLs() {
+        let urls = pendingURLs
+        pendingURLs = []
+        guard !urls.isEmpty else { return }
+        Task { @MainActor in
+            AppState.bootstrapIfNeeded()
+            await AppState.store?.importFiles(urls)
+        }
     }
 }
 
+
 extension Notification.Name {
+    /// 有待导入的 DMG（由「打开方式」/ 双击传入）。
     static let libraryOpenFiles = Notification.Name("DMGLibrary.OpenFiles")
 }

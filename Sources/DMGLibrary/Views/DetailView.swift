@@ -21,19 +21,28 @@ struct DetailPane: View {
     }
 }
 
+/// 备注保存状态，用于给用户的保存反馈。
+enum NoteSaveState {
+    case idle
+    case saving
+    case saved
+}
+
 private struct DetailEditor: View {
     @Environment(LibraryStore.self) private var store
     let item: DMGItem
 
     @State private var draft: DMGItem
     @State private var newTag = ""
-    @State private var showNotePreview = true
     @State private var showRelocate = false
     @State private var confirmInstall = false
     @State private var confirmDelete = false
-    @State private var showRawNote = false
+    @State private var showPreview = false
+    @State private var saveState: NoteSaveState = .idle
     @State private var saveTask: Task<Void, Never>?
     @State private var actionMessage: String?
+    @State private var showNewCategory = false
+    @State private var newCategoryName = ""
 
     private let dmgTypes = [UTType.dmg]
 
@@ -251,37 +260,42 @@ private struct DetailEditor: View {
 
     private var noteSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
+            HStack(spacing: 8) {
                 SectionHeader(title: "备注", symbol: "note.text")
                 Spacer()
-                Button(showRawNote ? "预览" : "编辑") {
-                    showRawNote.toggle()
+                if saveState == .saved {
+                    Label("已保存", systemImage: "checkmark.circle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.green)
+                } else if saveState == .saving {
+                    Label("保存中…", systemImage: "arrow.triangle.2.circlepath")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                } else if saveState == .idle {
+                    Text("自动保存").font(.caption2).foregroundStyle(.tertiary)
                 }
-                .buttonStyle(.borderless)
-                .font(.caption)
+                Toggle("预览", isOn: $showPreview)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .font(.caption)
             }
 
-            Group {
-                if showRawNote {
-                    TextEditor(text: $draft.note)
-                        .font(.system(.body, design: .monospaced))
-                        .frame(minHeight: 120)
-                        .padding(6)
-                        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
-                        .onChange(of: draft.note) { scheduleSave() }
-                } else if let rendered = renderedNote {
-                    Text(rendered)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(10)
-                        .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
-                } else {
-                    Text("添加备注…")
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(10)
-                        .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
-                        .onTapGesture { showRawNote = true }
-                }
+            TextEditor(text: $draft.note)
+                .font(.system(.body, design: .monospaced))
+                .frame(minHeight: 120)
+                .padding(6)
+                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(saveState == .saving ? Color.accentColor.opacity(0.4) : .clear, lineWidth: 1)
+                )
+                .onChange(of: draft.note) { scheduleSave() }
+
+            if showPreview, let rendered = renderedNote {
+                Text(rendered)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+                    .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
             }
         }
     }
@@ -354,14 +368,59 @@ private struct DetailEditor: View {
     private var categorySection: some View {
         VStack(alignment: .leading, spacing: 8) {
             SectionHeader(title: "分类", symbol: "folder")
-            Picker("分类", selection: $draft.category) {
+            FlowLayout(spacing: 6) {
                 ForEach(store.allCategories, id: \.self) { category in
-                    Text(category).tag(category)
+                    Button {
+                        draft.category = category
+                        save()
+                    } label: {
+                        HStack(spacing: 4) {
+                            if draft.category == category {
+                                Image(systemName: "checkmark")
+                                    .font(.caption2.weight(.bold))
+                            }
+                            Text(category)
+                        }
+                        .font(.caption)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(
+                            draft.category == category
+                                ? Color.accentColor.opacity(0.18)
+                                : Color.primary.opacity(0.06),
+                            in: Capsule()
+                        )
+                        .foregroundStyle(draft.category == category ? Color.accentColor : .primary)
+                    }
+                    .buttonStyle(.plain)
                 }
+
+                Button {
+                    showNewCategory = true
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.caption)
+                    Text("新建")
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(Color.primary.opacity(0.06), in: Capsule())
             }
-            .labelsHidden()
-            .frame(maxWidth: 260)
-            .onChange(of: draft.category) { save() }
+        }
+        .alert("新建分类", isPresented: $showNewCategory) {
+            TextField("分类名称", text: $newCategoryName)
+            Button("创建") {
+                let name = newCategoryName.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !name.isEmpty else { return }
+                store.addCategory(name)
+                draft.category = name
+                save()
+            }
+            Button("取消", role: .cancel) { }
+        } message: {
+            Text("分类代表「它是什么」；标签代表「它有什么属性」。")
         }
     }
 
@@ -412,16 +471,27 @@ private struct DetailEditor: View {
     private func save() {
         saveTask?.cancel()
         store.saveMetadata(draft)
+        flashSaved()
     }
 
     /// 文本输入防抖：停止输入 0.6 秒后再落库。
     private func scheduleSave() {
         let snapshot = draft
+        saveState = .saving
         saveTask?.cancel()
         saveTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 600_000_000)
             guard !Task.isCancelled else { return }
             store.saveMetadata(snapshot)
+            flashSaved()
+        }
+    }
+
+    private func flashSaved() {
+        saveState = .saved
+        Task {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            if saveState == .saved { saveState = .idle }
         }
     }
 
