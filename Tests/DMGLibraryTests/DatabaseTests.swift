@@ -101,6 +101,32 @@ final class DatabaseTests: XCTestCase {
         XCTAssertEqual(leftover.first?["c"]?.intValue, 0)
     }
 
+    func testOrphanTagsArePruned() throws {
+        var a = DMGItem.sample(id: 0)
+        a.path = "/tmp/A.dmg"; a.filename = "A.dmg"
+        a.tags = ["临时", "共享"]
+        try repository.insert(&a)
+
+        var b = DMGItem.sample(id: 0)
+        b.path = "/tmp/B.dmg"; b.filename = "B.dmg"
+        b.tags = ["共享"]
+        try repository.insert(&b)
+
+        // 把「临时」从它唯一的条目 A 上移除
+        try repository.setTags(itemID: a.id, tags: ["共享"])
+
+        let tags = try repository.tagCounts()
+        XCTAssertNil(tags.first { $0.name == "临时" }, "无引用的标签应被自动清理")
+        XCTAssertNotNil(tags.first { $0.name == "共享" }, "仍被引用的标签应保留")
+        XCTAssertEqual(tags.first { $0.name == "共享" }?.count, 2)
+
+        // 历史遗留的孤儿标签也能被 prune 清掉
+        try database.run("INSERT OR IGNORE INTO tags(name) VALUES(?);", bindings: [.value("幽灵")])
+        repository.pruneOrphanTags()
+        let after = try repository.tagCounts()
+        XCTAssertNil(after.first { $0.name == "幽灵" })
+    }
+
     func testFileNameGuessing() {
         XCTAssertEqual("Install_MarsEdit_5.8.3.dmg".guessedAppName, "MarsEdit")
         XCTAssertEqual("Chrome_139.0.7258_arm64.dmg".guessedAppName, "Chrome")

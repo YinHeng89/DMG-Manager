@@ -71,6 +71,7 @@ final class LibraryStore {
         self.repository = ItemRepository(database: database)
         self.settings = SettingsStore(database: database)
         reload()
+        repository.pruneOrphanTags() // 启动时清掉历史遗留的无引用标签
         loadSettings()
     }
 

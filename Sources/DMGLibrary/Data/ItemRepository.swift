@@ -112,15 +112,19 @@ final class ItemRepository {
                     SELECT ?, id FROM tags WHERE name = ?;
                     """, bindings: [.value(itemID), .value(tag)])
             }
+            // 清理孤儿标签：从最后一个引用它的条目移除后，自动从词表删除，
+            // 这样「常用标签 / 侧栏 / 筛选器」里就不会再出现没人用的标签。
+            try database.run("DELETE FROM tags WHERE id NOT IN (SELECT DISTINCT tag_id FROM dmg_tags);")
         }
     }
 
-    /// 全部标签及每个标签下的条目数。
+    /// 全部标签及每个标签下的条目数。只返回仍被至少一个条目引用的标签，
+    /// 无引用的孤儿标签不会出现（已随 setTags 自动清理）。
     func tagCounts() throws -> [(name: String, count: Int)] {
         let rows = try database.query("""
             SELECT tags.name AS name, COUNT(dmg_tags.dmg_id) AS count
             FROM tags
-            LEFT JOIN dmg_tags ON dmg_tags.tag_id = tags.id
+            JOIN dmg_tags ON dmg_tags.tag_id = tags.id
             GROUP BY tags.id
             ORDER BY count DESC, tags.name COLLATE NOCASE;
             """)
@@ -128,6 +132,11 @@ final class ItemRepository {
             guard let name = row["name"]?.stringValue else { return nil }
             return (name, Int(row["count"]?.intValue ?? 0))
         }
+    }
+
+    /// 删除没有任何条目引用的孤儿标签，保持标签词表只保留「还有人用」的标签。
+    func pruneOrphanTags() {
+        _ = try? database.run("DELETE FROM tags WHERE id NOT IN (SELECT DISTINCT tag_id FROM dmg_tags);")
     }
 
     func categoryCounts() throws -> [(name: String, count: Int)] {
