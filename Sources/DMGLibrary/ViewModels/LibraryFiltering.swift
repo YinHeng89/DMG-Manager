@@ -91,7 +91,7 @@ extension LibraryStore {
 
         // 用 mapValues 整体替换，而不是 `for key in grouped.keys { grouped[key]?.sort() }`——
         // 那样是「一边遍历字典一边改它」，触发写时复制时会直接崩（mutation during iteration）。
-        let sorted = grouped.mapValues { $0.sorted(by: Self.isPreferredOver) }
+        let sorted = grouped.mapValues { $0.sorted(by: isPreferredOver) }
         groupIndexCache = sorted
         return sorted
     }
@@ -101,7 +101,7 @@ extension LibraryStore {
     /// 版本比较用 VersionComparator（139.0 > 138.0，1.0 > 1.0-beta）；都没版本号时
     /// 按入库时间倒序。这里刻意不用 `item.exists`——它会走 FileManager 查磁盘，
     /// 在排序比较器里调用就是 O(n log n) 次 I/O，改用已经缓存在内存里的解析状态作代理。
-    private static func isPreferredOver(_ lhs: DMGItem, _ rhs: DMGItem) -> Bool {
+    private func isPreferredOver(_ lhs: DMGItem, _ rhs: DMGItem) -> Bool {
         switch (lhs.version, rhs.version) {
         case (let left?, let right?):
             switch VersionComparator.compare(left, right) {
@@ -114,8 +114,10 @@ extension LibraryStore {
         case (nil, nil): break
         }
 
-        let lhsMissing = lhs.parseStatus == .missing
-        let rhsMissing = rhs.parseStatus == .missing
+        // 优先用内存里的存在性快照（presence）；尚未采样时回退到解析状态 .missing 作代理，
+        // 避免排序比较器里反复 stat 磁盘（O(n log n) 次 I/O）。
+        let lhsMissing = !(presence[lhs.id] ?? (lhs.parseStatus != .missing))
+        let rhsMissing = !(presence[rhs.id] ?? (rhs.parseStatus != .missing))
         if lhsMissing != rhsMissing { return !lhsMissing }
         return lhs.createdAt > rhs.createdAt
     }
@@ -162,7 +164,7 @@ extension LibraryStore {
             let cutoff = Date().addingTimeInterval(-7 * 86_400)
             return items.filter { $0.createdAt >= cutoff }.count
         case .recentlyUsed: return items.filter { $0.lastOpenedAt != nil }.count
-        case .missing: return items.filter { !$0.exists }.count
+        case .missing: return items.filter { !(presence[$0.id] ?? $0.exists) }.count
         case .duplicates: return duplicateGroups().reduce(0) { $0 + $1.count }
         }
     }
@@ -199,7 +201,7 @@ extension LibraryStore {
         case .recentlyUsed:
             return input.filter { $0.lastOpenedAt != nil }
         case .missing:
-            return input.filter { !$0.exists }
+            return input.filter { !(presence[$0.id] ?? $0.exists) }
         case .duplicates:
             // Set 而不是 Array：之前是 flatMap 成数组再 contains，每个条目都要线性扫一遍
             // 哈希清单，整段是 O(n²)。

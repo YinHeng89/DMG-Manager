@@ -29,6 +29,9 @@ final class LibraryStore {
     // MARK: - 数据
 
     private(set) var items: [DMGItem] = []
+    /// 文件存在性快照：UI 据它判断「文件失联」，而非直接读 `item.exists`。
+    /// `exists` 是 computed，外部增删文件不会触发 Observation 重绘，必须靠这个被追踪的属性主动推变化。
+    private(set) var presence: [Int64: Bool] = [:]
     private(set) var tagCounts: [(name: String, count: Int)] = []
     private(set) var categoryCounts: [(name: String, count: Int)] = []
     private(set) var customCategories: [String] = []
@@ -359,7 +362,10 @@ final class LibraryStore {
 
     /// 解析单个条目：pending → parsing → parsed / noApp / failed / missing。
     private func parseOne(id: Int64) async {
-        guard var item = item(id: id), item.parseStatus == .pending || item.parseStatus == .parsed else {
+        guard var item = item(id: id) else { return }
+        // 之前标记过 .missing 但文件回来了：当作 pending 重新解析，清掉失联状态（自愈）。
+        let recoverable = item.parseStatus == .missing && item.exists
+        guard item.parseStatus == .pending || item.parseStatus == .parsed || recoverable else {
             return
         }
         guard item.exists else {
@@ -605,6 +611,17 @@ final class LibraryStore {
         if relocatedCount > 0 {
             await reparse(ids: Set(items.filter { $0.parseStatus == .pending }.map(\.id)))
         }
+    }
+
+    /// 重新采样每个条目在磁盘上的存在性，写入 `presence`。
+    /// 解决「外部删除/恢复文件后界面不重绘」的问题：`exists` 是 computed，不触发 Observation，
+    /// 必须靠这个被追踪的属性把变化推出去。仅在存在性实际变化时更新并失效派生缓存，避免无谓重绘。
+    func refreshPresence() {
+        var next: [Int64: Bool] = [:]
+        for item in items { next[item.id] = item.exists }
+        guard next != presence else { return }
+        presence = next
+        invalidateDerivedState()
     }
 
     /// 刷新所有条目的安装状态。

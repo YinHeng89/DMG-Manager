@@ -49,9 +49,13 @@ struct AppIconView: View {
 /// 解析状态 / 安装状态徽章。未解析完成时优先显示解析状态。
 struct StatusBadge: View {
     let item: DMGItem
+    @Environment(LibraryStore.self) private var store
 
     var body: some View {
-        if !item.exists {
+        // 通过 store.presence（被 Observation 追踪）判断存在性：外部删/恢复文件时才会驱动重绘；
+        // 直接读 item.exists 是 computed，不含变化通知，界面会卡在旧状态。
+        let exists = store.presence[item.id] ?? item.exists
+        if !exists {
             badge("文件失联", symbol: "exclamationmark.triangle.fill", color: .orange)
         } else if item.parseStatus == .parsing {
             badge("解析中", symbol: "arrow.triangle.2.circlepath", color: .blue)
@@ -59,8 +63,6 @@ struct StatusBadge: View {
             badge("等待解析", symbol: "clock", color: .secondary)
         } else if item.parseStatus == .failed {
             badge("解析失败", symbol: "exclamationmark.triangle.fill", color: .red)
-        } else if item.parseStatus == .missing {
-            badge("文件失联", symbol: "questionmark.folder.fill", color: .orange)
         } else if item.parseStatus == .noApp {
             badge("无 App", symbol: "doc.circle", color: .secondary)
         } else {

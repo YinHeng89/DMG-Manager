@@ -58,6 +58,9 @@ private struct DetailEditor: View {
     @State private var showRelocate = false
     @State private var confirmInstall = false
     @State private var confirmDelete = false
+    /// 失联文件专属：用户确认「这文件我确实删了，把库里这条记录也删掉」。
+    /// 文件已不存在，所以只做库内移除，不带「移到废纸篓」。
+    @State private var confirmRemoveMissing = false
     @State private var showPreview = true
     @State private var saveState: NoteSaveState = .idle
     @State private var saveTask: Task<Void, Never>?
@@ -147,6 +150,15 @@ private struct DetailEditor: View {
         } message: {
             Text("删除后这条记录的名称、备注、标签都会消失。原始 DMG 只有在「移到废纸篓」时才会被删除。")
         }
+        .confirmationDialog("从资料库移除", isPresented: $confirmRemoveMissing) {
+            Button("移除这条记录", role: .destructive) {
+                store.delete(ids: [item.id], moveToTrash: false)
+                flash("已从资料库移除")
+            }
+            Button("取消", role: .cancel) { }
+        } message: {
+            Text("原始文件已不在磁盘上（可能是你自己删掉的）。确认只把这条资料库记录移除，不会动磁盘。")
+        }
     }
 
     // MARK: - 头部（固定区，不滚动）
@@ -201,7 +213,7 @@ private struct DetailEditor: View {
     // MARK: - 文件失联
 
     private var missingBanner: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .center, spacing: 10) {
             Label("文件位置已改变", systemImage: "exclamationmark.triangle.fill")
                 .font(.callout.weight(.medium))
                 .foregroundStyle(.orange)
@@ -209,7 +221,9 @@ private struct DetailEditor: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
-            HStack {
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity, alignment: .center)
+            HStack(spacing: 8) {
                 Button("重新定位…") { showRelocate = true }
                     .buttonStyle(.borderedProminent)
                 Button("自动查找…") {
@@ -218,7 +232,10 @@ private struct DetailEditor: View {
                         flash(store.item(id: item.id)?.exists == true ? "已自动重新连接" : "没有找到匹配的文件")
                     }
                 }
+                Button("从资料库移除") { confirmRemoveMissing = true }
+                    .foregroundStyle(.red)
             }
+            .frame(maxWidth: .infinity)
         }
         .padding(12)
         .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
