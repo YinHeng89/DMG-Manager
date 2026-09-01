@@ -9,7 +9,7 @@ extension String {
 
     /// 从文件名猜测软件名：`Install_MarsEdit_5.8.3.dmg` → `MarsEdit`
     var guessedAppName: String {
-        var base = deletingDMGExtension
+        let base = deletingDMGExtension
         // 去掉常见前后缀词
         let noiseWords = ["install", "installer", "setup", "macos", "mac", "darwin", "dmg", "pkg", "latest", "stable"]
         let archWords = ["arm64", "aarch64", "x64", "x86_64", "intel", "universal", "apple", "silicon", "m1", "m2", "m3"]
