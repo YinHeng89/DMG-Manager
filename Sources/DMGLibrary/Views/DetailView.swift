@@ -32,9 +32,12 @@ struct DetailPane: View {
 /// 让这一列顶部始终有固定内容，分栏竖线就不会往上穿透。
 /// 具体文字提示由下方居中的 ContentUnavailableView 承载。
 private struct DetailEmptyHeader: View {
+    /// 对齐选中态固定头部的高度：图标行 44 + 徽章行 20 + 操作按钮 44 + 间距/内边距约 40。
+    /// 操作按钮排在很窄的详情列里会换行，那时实际高度更大——占位只差一截，
+    /// 反正它的唯一职责是让这一列顶部始终有固定内容、挡住分栏竖线。
     var body: some View {
         Color.clear
-            .frame(height: 64)
+            .frame(height: 148)
             .background(.bar)
     }
 }
@@ -70,24 +73,27 @@ private struct DetailEditor: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // 固定头部：钉在顶部，不随内容滚动（同时充当顶栏，避免分栏竖线穿透）
-            header
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .background(.bar)
+            // 固定头部：名称 + 徽章 + 操作按钮，整块钉在顶部不随内容滚动
+            // （同时充当顶栏，避免分栏竖线穿透）
+            VStack(alignment: .leading, spacing: 10) {
+                headerRow
+                actions
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(.bar)
 
             Divider()
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     if !item.exists { missingBanner }
-                    actions
                     if item.parseStatus == .failed, let error = item.parseError { parseErrorBanner(error) }
                     metadataSection
                     noteSection
                     tagsSection
                     categorySection
-                    if !relatedVersions.isEmpty { versionSection }
+                    if versionGroup.count > 1 { versionSection }
                     footerActions
                 }
                 .padding(20)
@@ -143,11 +149,14 @@ private struct DetailEditor: View {
         }
     }
 
-    // MARK: - 头部
+    // MARK: - 头部（固定区，不滚动）
 
-    private var header: some View {
+    /// 图标 + 名称 + 版本 + 架构/状态徽章。文字块在同一条左对齐的列里（图标在左、文字块在右），
+    /// 徽章紧跟在版本下面、和名称/版本左对齐——这是本次会话之前（HEAD）的原始排布，
+    /// 本会话重构时误把它拆成了单独一行，这里还原。操作按钮在 `actions`（固定头部、不滚动）。
+    private var headerRow: some View {
         HStack(alignment: .center, spacing: 12) {
-            AppIconView(filename: item.iconFilename, size: 44)
+            AppIconView(filename: item.iconFilename, size: 54)
 
             VStack(alignment: .leading, spacing: 3) {
                 TextField("显示名称", text: $draft.displayName)
@@ -236,11 +245,12 @@ private struct DetailEditor: View {
 
     // MARK: - 操作按钮
 
-    /// 操作按钮排。
+    /// 操作按钮排。常驻在固定头部里（架构徽章下面），不随下面的信息滚动。
     ///
-    /// 用 FlowLayout 而不是 HStack：HStack 里 6 个 58pt 固定宽按钮会形成
-    /// ≈400pt 的「硬最小宽度」，详情列压不下去；空间一紧张 NSSplitView 就会
+    /// 用 FlowLayout 而不是 HStack：HStack 里 6 个固定宽按钮会形成
+    /// 「硬最小宽度」，详情列压不下去；空间一紧张 NSSplitView 就会
     /// 自动折叠侧边栏，布局直接崩。换成流式布局后窄宽度自动换行。
+    /// 每个按钮内部是「图标在左、文字在右」的横排（见 ActionButton）。
     private var actions: some View {
         FlowLayout(spacing: 8) {
             ActionButton("打开", symbol: "arrow.up.forward.square") { store.open(item) }
@@ -496,26 +506,39 @@ private struct DetailEditor: View {
 
     // MARK: - 版本库
 
-    private var relatedVersions: [DMGItem] {
-        store.relatedVersions(for: item)
+    /// 同一个软件的全部版本（含当前这条），按「最新优先」排好序。
+    ///
+    /// 列表里只显示代表项（默认最新版本），其余版本从这里切过去——
+    /// 一换 selectedItemID，DetailPane 就会用 `.id(item.id)` 重建整个编辑器，
+    /// 头部（名称 / 版本 / 架构 / 状态）和「安装包信息」整块跟着换成本版本的数据。
+    private var versionGroup: [DMGItem] {
+        store.versionGroup(for: item)
     }
 
     private var versionSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SectionHeader(title: "版本库 · \(relatedVersions.count + 1) 个版本", symbol: "clock.arrow.circlepath")
+            SectionHeader(title: "版本库 · \(versionGroup.count) 个版本", symbol: "clock.arrow.circlepath")
 
             VStack(spacing: 4) {
-                VersionRow(item: item, isCurrent: true)
-
-                ForEach(relatedVersions) { other in
+                ForEach(versionGroup) { member in
                     Button {
-                        store.selectedItemID = other.id
+                        store.selectedItemID = member.id
                     } label: {
-                        VersionRow(item: other, isCurrent: false)
+                        VersionRow(
+                            item: member,
+                            isCurrent: member.id == item.id,
+                            isLatest: member.id == versionGroup.first?.id
+                        )
                     }
                     .buttonStyle(.plain)
+                    // 不 disable 当前项：禁用会把整行（包括高亮背景）渲染成灰色，
+                    // 看起来像不可选。点自己本来就是无副作用的重设同一个 id。
                 }
             }
+
+            Text("列表默认显示最新版本，切换后上方信息随之更新。")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
         }
     }
 
@@ -587,13 +610,14 @@ struct ActionButton: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 4) {
+            HStack(spacing: 6) {
                 Image(systemName: symbol)
-                    .font(.system(size: 15))
+                    .font(.system(size: 14))
                 Text(title)
-                    .font(.caption2)
+                    .font(.caption)
             }
-            .frame(width: 58, height: 44)
+            .padding(.horizontal, 10)
+            .frame(height: 32)
             .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
@@ -603,12 +627,22 @@ struct ActionButton: View {
 struct VersionRow: View {
     let item: DMGItem
     let isCurrent: Bool
+    /// 组内版本最高的那条。列表默认展示的就是它，标出来方便用户认路。
+    var isLatest = false
 
     var body: some View {
         HStack(spacing: 10) {
             AppIconView(filename: item.iconFilename, size: 22)
             Text(item.version ?? "未知版本")
                 .font(.callout)
+            if isLatest {
+                Text("最新")
+                    .font(.caption2)
+                    .foregroundStyle(.green)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.green.opacity(0.12), in: Capsule())
+            }
             if isCurrent {
                 Text("当前")
                     .font(.caption2)
@@ -630,6 +664,7 @@ struct VersionRow: View {
             RoundedRectangle(cornerRadius: 8)
                 .fill(isCurrent ? Color.accentColor.opacity(0.12) : Color.clear)
         )
+        .contentShape(Rectangle())
     }
 }
 

@@ -10,26 +10,36 @@ import SwiftUI
 ///
 /// 换成 `ScrollView + LazyVStack` 后，中间列和「空白状态 / 解析中」一样轻：
 /// 不参与分栏约束、不撑最小宽度，宽度不够就裁切，永远不会触发约束冲突。
+///
+/// 渲染的是 `displayedItems` 而不是 `filteredItems`：同一个软件只占一行，
+/// 其余版本在详情的「版本库」里切换。
 struct ItemListView: View {
     @Environment(LibraryStore.self) private var store
     /// 列表里点的这一下，目标一定已经可见，不需要滚动定位；用这个标记跳过随后的 scrollTo。
     @State private var suppressScroll = false
 
     var body: some View {
+        // 用 let 接住再进闭包：在 ForEach 里直接访问这个属性会每行求值一次，
+        // 而它内部要在 items 里线性查找，整段就退化成 O(n²)。
+        let selectedKey = store.selectedGroupKey
+
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    ForEach(Array(store.filteredItems.enumerated()), id: \.element.id) { index, item in
+                    ForEach(Array(store.displayedItems.enumerated()), id: \.element.id) { index, item in
                         ItemRow(
                             item: item,
-                            isSelected: store.selectedItemID == item.id,
-                            isAlternate: index % 2 == 1
+                            isSelected: item.groupingKey == selectedKey,
+                            isAlternate: index % 2 == 1,
+                            versionCount: store.versionCount(for: item)
                         )
                         .id(item.id)
                         .contentShape(Rectangle())
                         .onTapGesture {
                             suppressScroll = true
-                            store.selectedItemID = item.id
+                            // 点一行等于选中「这个软件」：切到它的代表项（最新版本）。
+                            // 之前选中过旧版本的话，点回来应该回到最新，而不是留在旧版本上。
+                            store.selectedItemID = store.representativeID(for: item.id)
                         }
                         .contextMenu { itemContextMenu(for: item) }
                     }
@@ -111,6 +121,9 @@ struct ItemRow: View {
     var isSelected = false
     /// 斑马纹（原来是 `alternatingRowBackgrounds`，这里自己画，避免依赖 List）。
     var isAlternate = false
+    /// 这个软件一共有几个版本（含当前这条）。> 1 时显示提示，
+    /// 否则用户会以为折叠掉的那些版本凭空消失了。
+    var versionCount = 1
 
     @State private var isHovered = false
 
@@ -127,6 +140,14 @@ struct ItemRow: View {
                         Image(systemName: "star.fill")
                             .font(.caption2)
                             .foregroundStyle(.yellow)
+                    }
+                    if versionCount > 1 {
+                        Text("共 \(versionCount) 个版本")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(.quaternary.opacity(0.6), in: Capsule())
                     }
                 }
 
@@ -180,15 +201,22 @@ struct ItemGridView: View {
     private let columns = [GridItem(.adaptive(minimum: 150, maximum: 220), spacing: 18)]
 
     var body: some View {
+        // 同 ItemListView：先用 let 接住，避免在 ForEach 里每行重复求值
+        let selectedKey = store.selectedGroupKey
+
         ScrollView {
             LazyVGrid(columns: columns, spacing: 18) {
-                ForEach(store.filteredItems) { item in
-                    GridCard(item: item, isSelected: store.selectedItemID == item.id)
-                        .contextMenu {
-                            Button("打开 DMG") { store.open(item) }
-                            Button("在 Finder 中显示") { store.revealInFinder(item) }
-                            Button(item.favorite ? "取消收藏" : "收藏") { store.toggleFavorite(id: item.id) }
-                        }
+                ForEach(store.displayedItems) { item in
+                    GridCard(
+                        item: item,
+                        isSelected: item.groupingKey == selectedKey,
+                        versionCount: store.versionCount(for: item)
+                    )
+                    .contextMenu {
+                        Button("打开 DMG") { store.open(item) }
+                        Button("在 Finder 中显示") { store.revealInFinder(item) }
+                        Button(item.favorite ? "取消收藏" : "收藏") { store.toggleFavorite(id: item.id) }
+                    }
                 }
             }
             .padding(16)
@@ -201,6 +229,7 @@ struct GridCard: View {
     @State private var isHovered = false
     let item: DMGItem
     let isSelected: Bool
+    var versionCount = 1
 
     var body: some View {
         VStack(spacing: 8) {
@@ -227,6 +256,12 @@ struct GridCard: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
 
+            if versionCount > 1 {
+                Text("共 \(versionCount) 个版本")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
             StatusBadge(item: item)
         }
         .padding(10)
@@ -244,7 +279,7 @@ struct GridCard: View {
                 )
         )
         .onHover { isHovered = $0 }
-        .onTapGesture { store.selectedItemID = item.id }
+        .onTapGesture { store.selectedItemID = store.representativeID(for: item.id) }
     }
 
     private var selectionFill: Color {

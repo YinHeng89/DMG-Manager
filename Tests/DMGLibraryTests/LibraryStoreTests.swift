@@ -37,7 +37,8 @@ final class LibraryStoreTests: XCTestCase {
         favorite: Bool = false,
         tags: [String] = [],
         category: String = "未分类",
-        bytes: Int = 1024
+        bytes: Int = 1024,
+        sha256: String? = nil
     ) throws -> DMGItem {
         let url = makeFile(name: name, bytes: bytes)
         var item = DMGItem(
@@ -48,6 +49,7 @@ final class LibraryStoreTests: XCTestCase {
             favorite: favorite,
             tags: tags,
             fileSize: Int64(bytes),
+            sha256: sha256,
             appName: appName,
             bundleID: bundleID,
             version: version,
@@ -195,6 +197,92 @@ final class LibraryStoreTests: XCTestCase {
         store.delete(ids: [item.id], moveToTrash: false)
         XCTAssertNil(store.item(id: item.id))
         XCTAssertTrue(store.items.isEmpty)
+    }
+
+    // MARK: - 版本折叠
+
+    func testListCollapsesSameAppToLatestVersion() throws {
+        _ = try add("Chrome_138.dmg", appName: "Google Chrome", version: "138.0",
+                    bundleID: "com.google.Chrome", architecture: .appleSilicon)
+        let latest = try add("Chrome_139.dmg", appName: "Google Chrome", version: "139.0",
+                             bundleID: "com.google.Chrome", architecture: .appleSilicon)
+        _ = try add("IINA.dmg", appName: "IINA", version: "1.3.5",
+                    bundleID: "com.colliderli.iina", architecture: .appleSilicon)
+
+        // 三条记录，Chrome 的两个版本合并成一行
+        XCTAssertEqual(store.items.count, 3)
+        XCTAssertEqual(store.displayedItems.count, 2)
+        XCTAssertEqual(store.collapsedVersionCount, 1)
+
+        // 留下的是 139 而不是 138
+        let row = try XCTUnwrap(store.displayedItems.first { $0.appName == "Google Chrome" })
+        XCTAssertEqual(row.id, latest.id)
+        XCTAssertEqual(store.versionCount(for: row), 2)
+    }
+
+    /// 折叠只是「不显示」，不是删除：filteredItems 必须仍是全量，
+    /// 否则「重新解析当前列表」会漏掉折叠掉的旧版本。
+    func testCollapsedVersionsStayInFilteredItems() throws {
+        _ = try add("Chrome_138.dmg", appName: "Google Chrome", version: "138.0",
+                    bundleID: "com.google.Chrome", architecture: .appleSilicon)
+        _ = try add("Chrome_139.dmg", appName: "Google Chrome", version: "139.0",
+                    bundleID: "com.google.Chrome", architecture: .appleSilicon)
+
+        XCTAssertEqual(store.displayedItems.count, 1)
+        XCTAssertEqual(store.filteredItems.count, 2)
+    }
+
+    func testVersionGroupIsOrderedLatestFirst() throws {
+        let older = try add("Chrome_138.dmg", appName: "Google Chrome", version: "138.0",
+                            bundleID: "com.google.Chrome", architecture: .appleSilicon)
+        let newer = try add("Chrome_139.dmg", appName: "Google Chrome", version: "139.0",
+                            bundleID: "com.google.Chrome", architecture: .appleSilicon)
+
+        // 从任意一条取，顺序都一样（索引按组算，不依赖传入哪条）
+        XCTAssertEqual(store.versionGroup(for: newer).map(\.id), [newer.id, older.id])
+        XCTAssertEqual(store.versionGroup(for: older).map(\.id), [newer.id, older.id])
+    }
+
+    func testSelectingOldVersionKeepsRowHighlighted() throws {
+        let older = try add("Chrome_138.dmg", appName: "Google Chrome", version: "138.0",
+                            bundleID: "com.google.Chrome", architecture: .appleSilicon)
+        _ = try add("Chrome_139.dmg", appName: "Google Chrome", version: "139.0",
+                    bundleID: "com.google.Chrome", architecture: .appleSilicon)
+
+        // 从版本库切到旧版本：这一行不在列表里，但代表行仍应算选中
+        store.selectedItemID = older.id
+        let row = try XCTUnwrap(store.displayedItems.first)
+        XCTAssertNotEqual(row.id, older.id)
+        XCTAssertEqual(row.groupingKey, store.selectedGroupKey)
+        XCTAssertEqual(store.representativeID(for: older.id), row.id)
+    }
+
+    /// 「重复文件」存在的意义就是把每一份都摆出来，折叠了就自相矛盾。
+    func testDuplicatesListIsNotCollapsed() throws {
+        _ = try add("Chrome.dmg", appName: "Google Chrome", version: "139.0",
+                    bundleID: "com.google.Chrome", architecture: .appleSilicon,
+                    sha256: "same-hash")
+        _ = try add("Chrome_copy.dmg", appName: "Google Chrome", version: "139.0",
+                    bundleID: "com.google.Chrome", architecture: .appleSilicon,
+                    sha256: "same-hash")
+
+        store.selection = .smart(.duplicates)
+        XCTAssertEqual(store.displayedItems.count, 2)
+        XCTAssertEqual(store.collapsedVersionCount, 0)
+    }
+
+    func testDuplicateGroupsAreCachedAndInvalidated() throws {
+        XCTAssertTrue(store.duplicateGroups().isEmpty)
+
+        _ = try add("A.dmg", appName: "A", version: "1.0", bundleID: "com.example.a",
+                    architecture: .appleSilicon, sha256: "shared")
+        // 插入后 reload() 会清缓存，所以这里必须能看到新组
+        XCTAssertTrue(store.duplicateGroups().isEmpty)
+
+        _ = try add("A_copy.dmg", appName: "A", version: "1.0", bundleID: "com.example.a",
+                    architecture: .appleSilicon, sha256: "shared")
+        XCTAssertEqual(store.duplicateGroups().count, 1)
+        XCTAssertEqual(store.duplicateGroups().first?.count, 2)
     }
 }
 

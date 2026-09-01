@@ -51,17 +51,17 @@ final class LibraryStore {
 
     // 这几个都会影响 filteredItems，一改就让缓存失效。
     // selectedItemID 不在其中：选中哪一条不改变列表内容。
-    var selection: SidebarSelection = .smart(.all) { didSet { invalidateFilteredItems() } }
+    var selection: SidebarSelection = .smart(.all) { didSet { invalidateDerivedState() } }
     var selectedItemID: Int64?
-    var searchText = "" { didSet { invalidateFilteredItems() } }
+    var searchText = "" { didSet { invalidateDerivedState() } }
     var browseMode: BrowseMode = .list
-    var sortField: SortField = .addedAt { didSet { invalidateFilteredItems() } }
-    var sortAscending = false { didSet { invalidateFilteredItems() } }
-    var filters = FilterCriteria() { didSet { invalidateFilteredItems() } }
+    var sortField: SortField = .addedAt { didSet { invalidateDerivedState() } }
+    var sortAscending = false { didSet { invalidateDerivedState() } }
+    var filters = FilterCriteria() { didSet { invalidateDerivedState() } }
     var watchDirectories: [URL] = []
     var mountedVolumes: [Int64: URL] = [:]
 
-    // MARK: - 列表缓存
+    // MARK: - 派生数据缓存
 
     /// `filteredItems` 的缓存。过滤 + 排序每次访问都要全量重算（比较器用 localizedCompare，
     /// 比普通字符串比较贵一个量级），而一次渲染会被访问三四次（isEmpty / count / ForEach），
@@ -72,14 +72,31 @@ final class LibraryStore {
     var filteredItemsCache: [DMGItem]?
     var filteredItemsDirty = true
 
-    /// 同软件其他版本的缓存（按 item.id）。`relatedVersions(for:)` 每次都对全量 items 做
-    /// O(n) 扫描 + 排序，详情面板 body 里会被访问两次，选中切换时白白算一遍。缓存后 O(1)。
-    var relatedVersionsCache: [Int64: [DMGItem]] = [:]
+    /// `displayedItems` 的缓存，同一渲染周期会被访问多次。
+    var displayedItemsCache: [DMGItem]?
+    var displayedItemsDirty = true
 
-    private func invalidateFilteredItems() {
+    /// groupingKey → 该软件的全部版本（已按「最新优先」排好序）。
+    ///
+    /// 一次 O(n) 建好之后，版本库、代表项选取、版本计数、选中态判定全都变成 O(1) 查表。
+    /// 之前 `relatedVersions(for:)` 是按 item.id 各缓存一份，每选中一个新条目都要对全量
+    /// items 重新扫一遍并排序——选中切换一多就是 N 次 O(n log n)。
+    /// 和 `filteredItemsCache` 一样放在主类型里（extension 不能写存储属性），
+    /// 读它的是 LibraryFiltering.swift 里的分组逻辑，所以不能是 private。
+    var groupIndexCache: [String: [DMGItem]]?
+
+    /// `duplicateGroups()` 的缓存。侧边栏每次 body 都要问一次重复数，
+    /// 不缓存等于每次重绘都重扫全表。
+    var duplicateGroupsCache: [[DMGItem]]?
+
+    /// 所有派生缓存的统一失效点：items 变了、或者任何影响列表的输入变了都要走这里。
+    private func invalidateDerivedState() {
         filteredItemsDirty = true
         filteredItemsCache = nil
-        relatedVersionsCache.removeAll()
+        displayedItemsDirty = true
+        displayedItemsCache = nil
+        groupIndexCache = nil
+        duplicateGroupsCache = nil
     }
 
     let database: Database
@@ -102,7 +119,7 @@ final class LibraryStore {
 
     func reload() {
         items = (try? repository.fetchAll()) ?? []
-        invalidateFilteredItems()
+        invalidateDerivedState()
         tagCounts = (try? repository.tagCounts()) ?? []
         categoryCounts = (try? repository.categoryCounts()) ?? []
         customCategories = (try? repository.customCategories()) ?? []
@@ -333,7 +350,7 @@ final class LibraryStore {
             return nil
         }
         items.append(item)
-        invalidateFilteredItems()
+        invalidateDerivedState()
         return item
     }
 
@@ -466,7 +483,7 @@ final class LibraryStore {
         } else {
             items.append(item)
         }
-        invalidateFilteredItems()
+        invalidateDerivedState()
     }
 
     private func reloadCounters() {
@@ -495,7 +512,7 @@ final class LibraryStore {
             }
         }
         items.removeAll { ids.contains($0.id) }
-        invalidateFilteredItems()
+        invalidateDerivedState()
         if let selectedItemID, ids.contains(selectedItemID) { self.selectedItemID = nil }
         reloadCounters()
     }
@@ -701,28 +718,36 @@ final class LibraryStore {
 
     // MARK: - 版本库
 
-    /// 同一个软件的其他版本（按 Bundle ID / 名称聚合）。结果按 item.id 缓存，避免每次选中切换都全量扫描。
+    /// 同一个软件的其他版本（按 Bundle ID / 名称聚合），按「最新优先」排序。
+    /// 走 `versionGroups` 索引，O(1) 查表。
     func relatedVersions(for item: DMGItem) -> [DMGItem] {
-        if let cached = relatedVersionsCache[item.id] { return cached }
-        let key = item.groupingKey
-        let result = items
-            .filter { $0.groupingKey == key && $0.id != item.id }
-            .sorted { lhs, rhs in
-                VersionComparator.compare(lhs.version ?? "", rhs.version ?? "") == .orderedDescending
-            }
-        relatedVersionsCache[item.id] = result
-        return result
+        versionGroup(for: item).filter { $0.id != item.id }
     }
 
     /// 重复文件分组（按 SHA-256）。
+    ///
+    /// 只保留成员数 > 1 的组；组内按路径排，组之间按文件名排。带缓存，
+    /// 侧边栏每次重绘都要问一次重复数，不缓存等于每次都重扫全表。
     func duplicateGroups() -> [[DMGItem]] {
+        if let cached = duplicateGroupsCache { return cached }
+
         var groups: [String: [DMGItem]] = [:]
         for item in items {
             guard let hash = item.sha256, !hash.isEmpty else { continue }
             groups[hash, default: []].append(item)
         }
-        return groups.values.filter { $0.count > 1 }
+
+        let result = groups.values
+            .filter { $0.count > 1 }
             .map { $0.sorted { $0.path < $1.path } }
-            .sorted { ($0.first?.filename ?? "") < ($1.first?.filename ?? "") }
+            .sorted {
+                let lhs = $0.first?.filename ?? ""
+                let rhs = $1.first?.filename ?? ""
+                // 同名不同路径时再比路径，否则同名的两组顺序会随字典遍历顺序抖动
+                if lhs != rhs { return lhs < rhs }
+                return ($0.first?.path ?? "") < ($1.first?.path ?? "")
+            }
+        duplicateGroupsCache = result
+        return result
     }
 }

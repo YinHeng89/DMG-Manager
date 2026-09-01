@@ -150,6 +150,8 @@ struct ContentView: View {
                 }
                 .disabled(store.watchDirectories.isEmpty)
                 Button {
+                    // 用 filteredItems 而不是 displayedItems：列表折叠掉的旧版本也要一起重解析，
+                    // 否则它们永远停在旧的解析结果上（而且不会再被扫到）。
                     Task { await store.reparse(ids: Set(store.filteredItems.map(\.id))) }
                 } label: {
                     Label("重新解析当前列表", systemImage: "arrow.triangle.2.circlepath")
@@ -261,7 +263,7 @@ struct BrowserPane: View {
                 Divider()
             }
 
-            if store.filteredItems.isEmpty {
+            if store.displayedItems.isEmpty {
                 EmptyStateView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if store.browseMode == .list {
@@ -274,7 +276,10 @@ struct BrowserPane: View {
 
             // 状态栏作为普通子视图，而不是 safeAreaInset：
             // safeAreaInset 会改写这一列的安全区，拖动分栏时容易和分栏的安全区计算打架。
-            StatusBarView(items: store.filteredItems)
+            //
+            // 统计跟着「看到的」走：列表折叠了旧版本，总大小就算折叠后的，
+            // 否则用户看到的条目数和总大小对不上。
+            StatusBarView(items: store.displayedItems)
         }
     }
 }
@@ -305,7 +310,15 @@ private struct BrowserHeaderBar: View {
 
             Spacer(minLength: 8)
 
-            Text("\(store.filteredItems.count) 项")
+            // 折叠掉的旧版本不算进条目数，另给一句说明，免得用户以为它们被删了
+            if store.collapsedVersionCount > 0 {
+                Text("已折叠 \(store.collapsedVersionCount) 个旧版本")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .monospacedDigit()
+            }
+
+            Text("\(store.displayedItems.count) 项")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
