@@ -35,8 +35,26 @@ enum BackupService {
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         let name = "database-\(formatter.string(from: Date())).sqlite"
         let target = AppPaths.backups.appendingPathComponent(name)
-        try? FileManager.default.copyItem(at: database, to: target)
+        // 目标文件同名时先清掉：VACUUM INTO 要求目标不存在，否则会直接报错。
+        try? FileManager.default.removeItem(at: target)
+
+        if !vacuumInto(source: database, target: target) {
+            // VACUUM INTO 不可用时（库损坏 / 版本过旧）退回整文件拷贝，至少留一份东西。
+            try? FileManager.default.copyItem(at: database, to: target)
+        }
         prune()
+    }
+
+    /// SQLite 官方的在线备份方式：连上库执行 VACUUM INTO。
+    ///
+    /// 不能直接 `FileManager.copyItem` 主库文件——WAL 模式下尚未 checkpoint 的事务只存在
+    /// 于 `-wal` 里，只拷主库会丢掉这部分数据，复制出来的库还可能处于不一致状态。
+    /// 而「上一次异常退出、WAL 里还压着事务」恰恰是最需要备份生效的场景。
+    private static func vacuumInto(source: URL, target: URL) -> Bool {
+        guard let database = try? Database(fileURL: source) else { return false }
+        // 路径理论上可能含单引号，按 SQL 字面量规则转义。
+        let escaped = target.path.replacingOccurrences(of: "'", with: "''")
+        return (try? database.execute("VACUUM INTO '\(escaped)';")) != nil
     }
 
     static func prune() {

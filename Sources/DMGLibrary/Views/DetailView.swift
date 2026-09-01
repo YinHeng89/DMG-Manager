@@ -53,7 +53,14 @@ enum NoteSaveState {
 private struct DetailEditor: View {
     @Environment(LibraryStore.self) private var store
     @Environment(Preferences.self) private var prefs
-    let item: DMGItem
+    let itemID: Int64
+    private let initialItem: DMGItem
+    /// 实时从 store 读取该条目：后台解析 / 安装状态刷新会替换 items 里的对象，
+    /// 直接读 store 才能让详情面板跟着刷新，而不是停留在 init 时的快照——
+    /// 否则用户一保存，陈旧字段就被写回数据库，回滚掉后台刚更新的结果。
+    private var item: DMGItem { store.item(id: itemID) ?? initialItem }
+    /// 用户是否动过编辑字段（还未保存）：为真时不让后台更新覆盖草稿。
+    @State private var hasUnsavedEdits = false
 
     @State private var draft: DMGItem
     @State private var newTag = ""
@@ -72,7 +79,8 @@ private struct DetailEditor: View {
     private let dmgTypes = [UTType.dmg]
 
     init(item: DMGItem) {
-        self.item = item
+        self.itemID = item.id
+        self.initialItem = item
         _draft = State(initialValue: item)
     }
 
@@ -92,7 +100,9 @@ private struct DetailEditor: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    if !item.exists { missingBanner }
+                    // 用 presence 快照判断文件是否还在，避免 body 里每次重绘都 stat 磁盘，
+                    // 也和列表的失联状态保持一致（item.exists 是实时计算属性，会反复读盘）。
+                    if !(store.presence[item.id] ?? item.exists) { missingBanner }
                     if item.parseStatus == .failed, let error = item.parseError { parseErrorBanner(error) }
                     metadataSection
                     noteSection
@@ -106,6 +116,11 @@ private struct DetailEditor: View {
             .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
+        // 后台解析 / 安装状态刷新会替换 store 里这条记录（updatedAt 变化）。
+        // 用户没有未保存的编辑时，用最新数据刷新草稿，避免稍后保存把陈旧字段回写库。
+        .onChange(of: item.updatedAt) {
+            if !hasUnsavedEdits { draft = item }
+        }
         .safeAreaInset(edge: .bottom) {
             if let actionMessage {
                 Text(actionMessage)
@@ -177,7 +192,7 @@ private struct DetailEditor: View {
                     .textFieldStyle(.plain)
                     .font(.title3.weight(.semibold))
                     .onSubmit { save() }
-                    .onChange(of: draft.displayName) { scheduleSave() }
+                    .onChange(of: draft.displayName) { hasUnsavedEdits = true; scheduleSave() }
 
                 HStack(spacing: 6) {
                     if let version = item.version, !version.isEmpty {
@@ -373,7 +388,7 @@ private struct DetailEditor: View {
                         RoundedRectangle(cornerRadius: 8)
                             .strokeBorder(saveState == .saving ? Color.accentColor.opacity(0.4) : .clear, lineWidth: 1)
                     )
-                    .onChange(of: draft.note) { scheduleSave() }
+                    .onChange(of: draft.note) { hasUnsavedEdits = true; scheduleSave() }
             }
         }
     }
@@ -588,13 +603,19 @@ private struct DetailEditor: View {
 
     /// 文本输入防抖：停止输入 0.6 秒后再落库。
     private func scheduleSave() {
-        let snapshot = draft
+        var snapshot = draft
+        // 显示名被改过（与原始 item 不同）即视为用户自定义：置标记，
+        // 这样重新解析 / 自动扫库不会再把名字冲回 App 名。
+        if snapshot.displayName != item.displayName {
+            snapshot.displayNameIsCustom = true
+        }
         saveState = .saving
         saveTask?.cancel()
         saveTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 600_000_000)
             guard !Task.isCancelled else { return }
             store.saveMetadata(snapshot)
+            hasUnsavedEdits = false
             flashSaved()
         }
     }

@@ -29,11 +29,16 @@ extension String {
 }
 
 enum ByteFormatter {
-    static func string(fromBytes bytes: Int64) -> String {
-        guard bytes >= 0 else { return "—" }
+    /// 复用同一个 formatter：列表每行、详情页都在用，每次新建既浪费又触发不必要的 Allocation。
+    private static let formatter: ByteCountFormatter = {
         let formatter = ByteCountFormatter()
         formatter.countStyle = .file
         formatter.allowedUnits = [.useKB, .useMB, .useGB]
+        return formatter
+    }()
+
+    static func string(fromBytes bytes: Int64) -> String {
+        guard bytes >= 0 else { return "—" }
         return formatter.string(fromByteCount: bytes)
     }
 }

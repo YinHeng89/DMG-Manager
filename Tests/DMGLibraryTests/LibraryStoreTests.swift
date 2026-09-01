@@ -284,6 +284,74 @@ final class LibraryStoreTests: XCTestCase {
         XCTAssertEqual(store.duplicateGroups().count, 1)
         XCTAssertEqual(store.duplicateGroups().first?.count, 2)
     }
+
+    // MARK: - 回归：折叠不能把条目吞掉
+
+    /// 代表项曾经是拿全量 items 预先算好的，再去过滤子集，结果「代表项不在筛选结果里」
+    /// 时整组一条不剩。用户收藏的是旧版本，切到「收藏」就看到一个空列表。
+    func testFavoritedOldVersionStaysVisible() throws {
+        _ = try add("Chrome_139.dmg", appName: "Google Chrome", version: "139.0",
+                    bundleID: "com.google.Chrome", architecture: .appleSilicon, favorite: false)
+        let older = try add("Chrome_138.dmg", appName: "Google Chrome", version: "138.0",
+                            bundleID: "com.google.Chrome", architecture: .appleSilicon, favorite: true)
+
+        store.selection = .smart(.favorites)
+        XCTAssertEqual(store.filteredItems.count, 1, "过滤后应只剩被收藏的那条")
+        XCTAssertEqual(store.displayedItems.count, 1, "收藏列表里必须能看到这条记录")
+        XCTAssertEqual(store.displayedItems.first?.id, older.id)
+
+        // 回到全部：代表项仍是版本更高的那条
+        store.selection = .smart(.all)
+        XCTAssertEqual(store.displayedItems.count, 1)
+        XCTAssertEqual(store.displayedItems.first?.version, "139.0")
+    }
+
+    /// 同一个成因的另一条路径：搜索只命中旧版本时，列表同样不能为空。
+    func testSearchHitOnOldVersionStaysVisible() throws {
+        _ = try add("Chrome_139.dmg", appName: "Google Chrome", version: "139.0",
+                    bundleID: "com.google.Chrome", architecture: .appleSilicon)
+        let older = try add("Chrome_138.dmg", appName: "Google Chrome", version: "138.0",
+                            bundleID: "com.google.Chrome", architecture: .appleSilicon)
+
+        store.searchText = "138"
+        XCTAssertEqual(store.filteredItems.count, 1)
+        XCTAssertEqual(store.displayedItems.count, 1, "搜到的东西不能因为折叠而不显示")
+        XCTAssertEqual(store.displayedItems.first?.id, older.id)
+    }
+
+    /// 按标签筛选命中旧版本，同上。
+    func testTagFilterHitOnOldVersionStaysVisible() throws {
+        _ = try add("Chrome_139.dmg", appName: "Google Chrome", version: "139.0",
+                    bundleID: "com.google.Chrome", architecture: .appleSilicon)
+        let older = try add("Chrome_138.dmg", appName: "Google Chrome", version: "138.0",
+                            bundleID: "com.google.Chrome", architecture: .appleSilicon,
+                            tags: ["留着备用"])
+
+        store.selection = .tag("留着备用")
+        XCTAssertEqual(store.filteredItems.count, 1)
+        XCTAssertEqual(store.displayedItems.count, 1)
+        XCTAssertEqual(store.displayedItems.first?.id, older.id)
+    }
+
+    // MARK: - 回归：自定义显示名持久化（P0-2）
+
+    /// `display_name_is_custom` 必须能写进库再读回来。
+    /// 之前 P0-2 修复漏了仓库层（列清单 / 绑定 / 解码三处），标记永远写不进也读不出，
+    /// 于是「重新解析不覆盖用户改名」在持久层就失效了。这条用例守住这个环节。
+    func testCustomDisplayNamePersistsAcrossReload() throws {
+        var item = try add("CustomName.dmg", appName: "Real App", version: "1.0",
+                           bundleID: "com.example.app", architecture: .appleSilicon)
+        // 用户在详情面板把显示名改成自己的命名，并标记自定义
+        item.displayName = "我的命名"
+        item.displayNameIsCustom = true
+        store.saveMetadata(item)          // 走 updateMetadata（详情保存路径）
+        store.reload()
+
+        let reloaded = try XCTUnwrap(store.items.first { $0.id == item.id })
+        XCTAssertEqual(reloaded.displayName, "我的命名")
+        XCTAssertTrue(reloaded.displayNameIsCustom,
+                      "自定义标记必须随记录持久化并读回，否则重新解析会把它冲掉")
+    }
 }
 
 // 测试专用：直接插入一条记录，绕过真实 DMG 挂载。

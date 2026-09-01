@@ -51,8 +51,26 @@ extension LibraryStore {
 
     private func computeDisplayedItems() -> [DMGItem] {
         guard shouldCollapseVersions else { return filteredItems }
-        let groups = versionGroups
-        return filteredItems.filter { groups[$0.groupingKey]?.first?.id == $0.id }
+
+        // 代表项必须在「过滤后的集合」里选，不能拿全量 items 预先算好的组来过滤子集。
+        //
+        // 之前是后者：`versionGroups` 基于全量 items，代表项固定是版本最高的那条；
+        // 一旦它不在当前筛选结果里，整组一条都剩不下——用户收藏的是旧版本、切到「收藏」
+        // 就会看到一个空列表，而数据其实好好地躺在库里。搜索、按标签/分类/架构筛选同理。
+        var representativeIDs: Set<Int64> = []
+        var bestByKey: [String: DMGItem] = [:]
+        for item in filteredItems {
+            let key = item.groupingKey
+            if let best = bestByKey[key] {
+                guard isPreferredOver(item, best) else { continue }
+                representativeIDs.remove(best.id)
+            }
+            bestByKey[key] = item
+            representativeIDs.insert(item.id)
+        }
+
+        // 按 filteredItems 的原顺序输出，沿用上游已经排好的序
+        return filteredItems.filter { representativeIDs.contains($0.id) }
     }
 
     /// 当前分组下要不要折叠同软件的多个版本。
@@ -321,7 +339,11 @@ extension DMGItem {
 }
 
 /// 搜索文本缓存：列表滚动时避免反复拼接字符串。
-private final class SearchCache: @unchecked Sendable {
+///
+/// 按 `item.id` 缓存，删除 / 重加载后必须收敛到当前仍存在的 id 集合
+/// （见 `LibraryStore.delete` / `reload` 的清理调用），否则 `storage` 会随
+/// 运行时间无界增长。
+final class SearchCache: @unchecked Sendable {
     static let shared = SearchCache()
     private var storage: [Int64: (hash: Int, value: String)] = [:]
     private let lock = NSLock()
@@ -339,6 +361,12 @@ private final class SearchCache: @unchecked Sendable {
         } else {
             storage.removeValue(forKey: item.id)
         }
+    }
+
+    /// 把缓存收敛到当前仍存在的条目 id 集合，避免无界泄漏。
+    func prune(keeping ids: Set<Int64>) {
+        lock.lock(); defer { lock.unlock() }
+        storage = storage.filter { ids.contains($0.key) }
     }
 }
 

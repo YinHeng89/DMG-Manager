@@ -11,6 +11,8 @@ struct DMGItem: Identifiable, Hashable {
 
     // 用户维护的元数据
     var displayName: String
+    /// 用户是否手动改过名字。为 true 时重新解析不会用 App 名覆盖 `displayName`。
+    var displayNameIsCustom: Bool
     var note: String
     var category: String
     var favorite: Bool
@@ -50,6 +52,7 @@ struct DMGItem: Identifiable, Hashable {
         path: String = "",
         filename: String = "",
         displayName: String = "",
+        displayNameIsCustom: Bool = false,
         note: String = "",
         category: String = CategoryPresets.uncategorized,
         favorite: Bool = false,
@@ -80,6 +83,7 @@ struct DMGItem: Identifiable, Hashable {
         self.path = path
         self.filename = filename
         self.displayName = displayName
+        self.displayNameIsCustom = displayNameIsCustom
         self.note = note
         self.category = category
         self.favorite = favorite

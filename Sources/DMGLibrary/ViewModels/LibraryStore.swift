@@ -125,6 +125,7 @@ final class LibraryStore {
 
     func reload() {
         items = (try? repository.fetchAll()) ?? []
+        SearchCache.shared.prune(keeping: Set(items.map(\.id)))
         invalidateDerivedState()
         tagCounts = (try? repository.tagCounts()) ?? []
         categoryCounts = (try? repository.categoryCounts()) ?? []
@@ -276,6 +277,7 @@ final class LibraryStore {
 
     /// 返回真正新入库的条目数（已经导入过的不算）。
     @discardableResult
+    /// 手动导入：过滤 .dmg 并做 `isImporting` 串行化保护，真正的工作交给 `performImport`。
     func importFiles(_ urls: [URL]) async -> Int {
         let dmgURLs = urls.filter { $0.pathExtension.lowercased() == "dmg" }
         guard !dmgURLs.isEmpty else {
@@ -290,6 +292,12 @@ final class LibraryStore {
             return 0
         }
 
+        return await performImport(dmgURLs)
+    }
+
+    /// 真正的导入工作。调用方（`importFiles` / `scanFolder`）已在入口处完成 `isImporting`
+    /// 串行化，这里不再重复加锁——否则扫描中途挂起时并发的手动导入会把本次扫描发现的新 DMG 直接吞掉。
+    private func performImport(_ dmgURLs: [URL]) async -> Int {
         isImporting = true
         defer {
             isImporting = false
@@ -390,7 +398,10 @@ final class LibraryStore {
         DMGInspectionService.apply(result, to: &item)
         item.iconFilename = result.iconFilename
 
-        if let appName = result.appInfo?.name, !appName.isEmpty {
+        // 只在不曾手动改过名字时，用解析出的 App 名回填显示名。
+        // display_name_is_custom 由详情面板保存改名时置 true，避免「重新解析」/ 自动扫库
+        // 把用户起的名字冲掉——这正是产品第一原则「信息由你定义」的核心。
+        if !item.displayNameIsCustom, let appName = result.appInfo?.name, !appName.isEmpty {
             item.displayName = appName
         }
         if item.category == CategoryPresets.uncategorized, let appName = item.appName {
@@ -421,6 +432,10 @@ final class LibraryStore {
         guard !isImporting else {
             return ScanOutcome(scanned: 0, added: 0, truncated: false)
         }
+        // 在挂起扫描之前就上锁：扫描可能耗时数秒，期间若并发跑手动导入，旧逻辑要等到
+        // 扫描结束才检查 isImporting，从而把本次扫描发现的新 DMG 直接吞掉。
+        isImporting = true
+        defer { isImporting = false }
 
         let result = await Task.detached(priority: .utility) {
             DMGScanner.scan(url: folder)
@@ -433,7 +448,7 @@ final class LibraryStore {
             return ScanOutcome(scanned: 0, added: 0, truncated: result.truncated)
         }
 
-        let added = await importFiles(result.urls)
+        let added = await performImport(result.urls)
         return ScanOutcome(scanned: result.urls.count, added: added, truncated: result.truncated)
     }
 
@@ -543,6 +558,7 @@ final class LibraryStore {
             }
         }
         items.removeAll { ids.contains($0.id) }
+        SearchCache.shared.prune(keeping: Set(items.map(\.id)))
         invalidateDerivedState()
         if let selectedItemID, ids.contains(selectedItemID) { self.selectedItemID = nil }
         reloadCounters()
@@ -734,7 +750,11 @@ final class LibraryStore {
     /// 把 DMG 内的 App 拖到 /Applications —— 由用户显式触发，且只在确认后执行。
     func installApp(_ item: DMGItem) async throws {
         guard let relativePath = item.appRelativePath, item.exists else { return }
-        let volume = try DiskImageService.attach(imageURL: item.fileURL)
+        // 挂载是同步的 hdiutil 调用（1~3s），放到后台线程跑，避免卡住主线程
+        // （同文件的 mount() 就是用 Task.detached，这里保持一致）。
+        let volume = try await Task.detached(priority: .userInitiated) {
+            try DiskImageService.attach(imageURL: item.fileURL)
+        }.value
         defer {
             if mountedVolumes[item.id] == nil {
                 DiskImageService.detach(mountPoint: volume.mountPoint)
@@ -743,10 +763,12 @@ final class LibraryStore {
         let appURL = volume.mountPoint.appendingPathComponent(relativePath)
         let destination = URL(fileURLWithPath: "/Applications")
             .appendingPathComponent(appURL.lastPathComponent)
-        if FileManager.default.fileExists(atPath: destination.path) {
-            try FileManager.default.trashItem(at: destination, resultingItemURL: nil)
-        }
-        try FileManager.default.copyItem(at: appURL, to: destination)
+        // 原子替换：先拷到临时名，再用 replaceItemAt 替换。复制中途失败（磁盘满 / 权限）
+        // 时原 App 还在，不会像「先 trash 旧 App 再 copy 新」那样把用户已有的 App 弄丢。
+        let staging = destination.deletingLastPathComponent()
+            .appendingPathComponent("\(destination.lastPathComponent).installing-\(UUID().uuidString)")
+        try FileManager.default.copyItem(at: appURL, to: staging)
+        _ = try? FileManager.default.replaceItemAt(destination, withItemAt: staging)
 
         // 刚装好的 App 还没进 InstalledAppService 的缓存：先强制重新扫描，
         // 否则 resolve 扫不到 → installedVersion 仍是 nil → 安装状态徽章不刷新。

@@ -16,6 +16,11 @@ enum DiskImageService {
         process.executableURL = URL(fileURLWithPath: hdiutil)
         process.arguments = [
             "attach", imageURL.path,
+            // 强制只读挂载。产品第一原则是「永不修改原始 DMG」：
+            // hdiutil 默认按镜像自身的可写属性挂载，UDRW 这类可写格式会被挂成读写，
+            // 挂载过程就可能写回卷元数据、改动文件的时间戳。只读挂载对解析和安装
+            // （都是「从挂载点拷出去」）都完全够用。
+            "-readonly",
             "-nobrowse",      // 不在 Finder / 桌面显示
             "-noautoopen",    // 不自动弹出窗口
             "-mountrandom",   // 随机挂载点，避免与已有卷冲突

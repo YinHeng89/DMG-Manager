@@ -20,6 +20,12 @@ final class IconStore: @unchecked Sendable {
     /// 成品缓存：key 是「文件名#像素尺寸」，列表滚动时反复取用。
     private let cache = NSCache<NSString, NSImage>()
 
+    /// filename → 该文件已经生成过的像素尺寸。
+    /// NSCache 既不能遍历、也不支持按前缀清理，而成品缓存的 key 里带尺寸，
+    /// 删除条目时只按文件名是删不掉的，得靠这份记录逐个 key 清。
+    private var generatedSizes: [String: Set<Int>] = [:]
+    private let sizesLock = NSLock()
+
     init() {
         AppPaths.ensureDirectories()
         masterCache.countLimit = 120
@@ -75,8 +81,16 @@ final class IconStore: @unchecked Sendable {
             }
             let image = NSImage(cgImage: cg, size: NSSize(width: pointSize, height: pointSize))
             self.cache.setObject(image, forKey: key)
+            self.remember(pixelSize: px, for: filename)
             DispatchQueue.main.async { completion(image) }
         }
+    }
+
+    /// 记下这个尺寸，供 `delete(named:)` 精确清理成品缓存。
+    private func remember(pixelSize: Int, for filename: String) {
+        sizesLock.lock()
+        generatedSizes[filename, default: []].insert(pixelSize)
+        sizesLock.unlock()
     }
 
     private func pixelSize(for pointSize: CGFloat, scale: CGFloat) -> Int {
@@ -94,8 +108,15 @@ final class IconStore: @unchecked Sendable {
 
     func delete(named filename: String?) {
         guard let filename, !filename.isEmpty else { return }
+        // 主图缓存的 key 就是文件名
         masterCache.removeObject(forKey: filename as NSString)
-        cache.removeObject(forKey: filename as NSString)
+        // 成品缓存的 key 带尺寸，必须按记录逐个删，只按文件名删等于什么都没删
+        sizesLock.lock()
+        let sizes = generatedSizes.removeValue(forKey: filename) ?? []
+        sizesLock.unlock()
+        for size in sizes {
+            cache.removeObject(forKey: cacheKey(filename: filename, pixelSize: size))
+        }
         try? FileManager.default.removeItem(at: directory.appendingPathComponent(filename))
     }
 

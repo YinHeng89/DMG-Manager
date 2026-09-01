@@ -17,6 +17,9 @@ struct ItemListView: View {
     @Environment(LibraryStore.self) private var store
     /// 列表里点的这一下，目标一定已经可见，不需要滚动定位；用这个标记跳过随后的 scrollTo。
     @State private var suppressScroll = false
+    /// 待确认删除的条目 ID 集合：Delete 键或右键「从资料库移除」先暂存到这里，
+    /// 经 confirmationDialog 二次确认后才真正执行，避免一次误触丢失用户维护的认知数据。
+    @State private var pendingDeleteIDs: Set<Int64>? = nil
 
     var body: some View {
         // 用 let 接住再进闭包：在 ForEach 里直接访问这个属性会每行求值一次，
@@ -65,7 +68,24 @@ struct ItemListView: View {
         }
         .onDeleteCommand {
             let ids = Set(store.selectedItemID.map { [$0] } ?? [])
-            if !ids.isEmpty { store.delete(ids: ids, moveToTrash: false) }
+            if !ids.isEmpty { pendingDeleteIDs = ids }
+        }
+        .confirmationDialog(
+            pendingDeleteIDs.map { "确认从资料库移除选中的 \($0.count) 项？此操作不可撤销" }
+                ?? "确认移除？",
+            isPresented: Binding(
+                get: { pendingDeleteIDs != nil },
+                set: { if !$0 { pendingDeleteIDs = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("移除", role: .destructive) {
+                if let ids = pendingDeleteIDs {
+                    store.delete(ids: ids, moveToTrash: false)
+                }
+                pendingDeleteIDs = nil
+            }
+            Button("取消", role: .cancel) { pendingDeleteIDs = nil }
         }
     }
 
@@ -115,7 +135,7 @@ struct ItemListView: View {
         Divider()
 
         Button(role: .destructive) {
-            store.delete(ids: [item.id], moveToTrash: false)
+            pendingDeleteIDs = [item.id]
         } label: {
             Label("从资料库移除", systemImage: "trash")
         }

@@ -40,7 +40,7 @@ final class ItemRepository {
 
     /// 参与写入的列。占位符由列数自动生成，避免手写 `?` 数量与列数不一致。
     private static let writableColumns = [
-        "path", "filename", "display_name", "note", "category", "favorite",
+        "path", "filename", "display_name", "display_name_is_custom", "note", "category", "favorite",
         "file_size", "file_created_at", "file_modified_at", "sha256", "volume_name",
         "app_name", "bundle_id", "version", "build", "developer", "architecture",
         "minimum_os", "app_relative_path", "icon_filename",
@@ -74,10 +74,11 @@ final class ItemRepository {
     /// 只更新用户可编辑的元数据字段（名称 / 备注 / 分类 / 收藏），避免覆盖扫描结果。
     func updateMetadata(_ item: DMGItem) throws {
         try database.run("""
-            UPDATE dmg_items SET display_name = ?, note = ?, category = ?, favorite = ?, updated_at = ?
+            UPDATE dmg_items SET display_name = ?, display_name_is_custom = ?, note = ?, category = ?, favorite = ?, updated_at = ?
             WHERE id = ?;
             """, bindings: [
                 .value(item.displayName),
+                .value(item.displayNameIsCustom),
                 .value(item.note),
                 .value(item.category),
                 .value(item.favorite),
@@ -187,6 +188,7 @@ extension DMGItem {
             path: path,
             filename: filename,
             displayName: row["display_name"]?.stringValue ?? "",
+            displayNameIsCustom: row["display_name_is_custom"]?.boolValue ?? false,
             note: row["note"]?.stringValue ?? "",
             category: row["category"]?.stringValue ?? CategoryPresets.uncategorized,
             favorite: row["favorite"]?.boolValue ?? false,
@@ -217,7 +219,7 @@ extension DMGItem {
 
     func insertBindings() -> [DatabaseValue] {
         [
-            .value(path), .value(filename), .value(displayName), .value(note),
+            .value(path), .value(filename), .value(displayName), .value(displayNameIsCustom), .value(note),
             .value(category), .value(favorite),
             .value(fileSize), .value(fileCreatedAt?.timeIntervalSince1970),
             .value(fileModifiedAt?.timeIntervalSince1970), .value(sha256), .value(volumeName),

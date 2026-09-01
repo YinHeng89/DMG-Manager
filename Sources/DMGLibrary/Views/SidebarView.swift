@@ -11,12 +11,15 @@ struct SidebarView: View {
         )) {
             Section(prefs.t("sidebar.library")) {
                 ForEach([SmartList.all, .favorites, .recent, .recentlyUsed, .missing, .duplicates]) { list in
+                    // 每个列表的计数只算一次：原来 if 和 Text 各调一次 count(for:)（每次全量 filter），
+                    // 条目多时重复扫描。先取出来复用。
+                    let count = store.count(for: list)
                     Label {
                         HStack {
                             Text(list.title)
                             Spacer()
-                            if store.count(for: list) > 0 {
-                                Text("\(store.count(for: list))")
+                            if count > 0 {
+                                Text("\(count)")
                                     .foregroundStyle(.secondary)
                                     .monospacedDigit()
                             }
@@ -31,12 +34,13 @@ struct SidebarView: View {
 
             Section {
                 ForEach(visibleCategories, id: \.self) { category in
+                    let count = store.count(forCategory: category)
                     Label {
                         HStack {
                             Text(category)
                             Spacer()
-                            if store.count(forCategory: category) > 0 {
-                                Text("\(store.count(forCategory: category))")
+                            if count > 0 {
+                                Text("\(count)")
                                     .foregroundStyle(.secondary)
                                     .monospacedDigit()
                             }

@@ -27,19 +27,30 @@ enum SHA256Service {
     static let bufferSize = 1 << 20 // 1 MB
 
     static func hash(fileAt url: URL) throws -> String {
-        guard let handle = try? FileHandle(forReadingFrom: url) else {
+        let handle: FileHandle
+        do {
+            handle = try FileHandle(forReadingFrom: url)
+        } catch {
             throw DMGServiceError.unreadable(url.path)
         }
         defer { try? handle.close() }
 
         var hasher = SHA256()
-        while autoreleasepool(invoking: {
-            if let chunk = try? handle.read(upToCount: bufferSize), !chunk.isEmpty {
-                hasher.update(data: chunk)
-                return true
+        // 读取错误必须真的抛出去。之前用 `try?` 把错误吞掉，失败时和「读到末尾」走同一条
+        // 分支，于是「读到一半出错」被当成「读完了」，返回一个截断文件的哈希并写进数据库，
+        // 直接污染重复检测与失联重连（SHA 是置信度最高的匹配依据）。
+        //
+        // 注意 nil / 空 Data 表示读到末尾（正常结束），只有 throw 才是真错误，两者要分开处理。
+        while true {
+            let chunk: Data?
+            do {
+                chunk = try autoreleasepool { try handle.read(upToCount: bufferSize) }
+            } catch {
+                throw DMGServiceError.unreadable(url.path)
             }
-            return false
-        }) { }
+            guard let chunk, !chunk.isEmpty else { break }
+            hasher.update(data: chunk)
+        }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 }
