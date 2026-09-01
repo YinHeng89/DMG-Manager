@@ -14,7 +14,7 @@ enum Architecture: String, Codable, CaseIterable, Identifiable {
         case .appleSilicon: return "Apple Silicon"
         case .intel: return "Intel"
         case .universal: return "Universal"
-        case .unknown: return "未知"
+        case .unknown: return Preferences.shared.t("arch.unknown")
         }
     }
 
@@ -63,12 +63,12 @@ enum ParseStatus: String, Codable, CaseIterable {
 
     var displayName: String {
         switch self {
-        case .pending: return "等待解析"
-        case .parsing: return "解析中"
-        case .parsed: return "已解析"
-        case .noApp: return "无 App"
-        case .failed: return "解析失败"
-        case .missing: return "文件失联"
+        case .pending: return Preferences.shared.t("parse.pending")
+        case .parsing: return Preferences.shared.t("parse.parsing")
+        case .parsed: return Preferences.shared.t("parse.parsed")
+        case .noApp: return Preferences.shared.t("parse.noApp")
+        case .failed: return Preferences.shared.t("parse.failed")
+        case .missing: return Preferences.shared.t("parse.missing")
         }
     }
 
@@ -98,11 +98,11 @@ enum InstallStatus {
 
     var displayName: String {
         switch self {
-        case .installed: return "已安装"
-        case .outdated: return "旧版本"
-        case .newerThanInstalled: return "有更新"
-        case .notInstalled: return "未安装"
-        case .unknown: return "未知"
+        case .installed: return Preferences.shared.t("install.installed")
+        case .outdated: return Preferences.shared.t("install.outdated")
+        case .newerThanInstalled: return Preferences.shared.t("install.newer")
+        case .notInstalled: return Preferences.shared.t("install.notInstalled")
+        case .unknown: return Preferences.shared.t("install.unknown")
         }
     }
 
@@ -130,12 +130,12 @@ enum SmartList: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .all: return "全部"
-        case .favorites: return "收藏"
-        case .recent: return "最近添加"
-        case .recentlyUsed: return "最近使用"
-        case .missing: return "文件失联"
-        case .duplicates: return "重复文件"
+        case .all: return Preferences.shared.t("smart.all")
+        case .favorites: return Preferences.shared.t("smart.favorites")
+        case .recent: return Preferences.shared.t("smart.recent")
+        case .recentlyUsed: return Preferences.shared.t("smart.recentlyUsed")
+        case .missing: return Preferences.shared.t("smart.missing")
+        case .duplicates: return Preferences.shared.t("smart.duplicates")
         }
     }
 
@@ -173,11 +173,11 @@ enum InstallStatusFilter: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .installed: return "已安装"
-        case .newer: return "有更新"
-        case .outdated: return "旧版本"
-        case .notInstalled: return "未安装"
-        case .unknown: return "未知"
+        case .installed: return Preferences.shared.t("statusfilter.installed")
+        case .newer: return Preferences.shared.t("statusfilter.newer")
+        case .outdated: return Preferences.shared.t("statusfilter.outdated")
+        case .notInstalled: return Preferences.shared.t("statusfilter.notInstalled")
+        case .unknown: return Preferences.shared.t("statusfilter.unknown")
         }
     }
 
@@ -208,8 +208,8 @@ enum BrowseMode: String, CaseIterable, Identifiable {
 
     var help: String {
         switch self {
-        case .list: return "列表视图"
-        case .grid: return "图标视图"
+        case .list: return Preferences.shared.t("browse.list")
+        case .grid: return Preferences.shared.t("browse.grid")
         }
     }
 }
@@ -226,11 +226,11 @@ enum SortField: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .name: return "名称"
-        case .version: return "版本"
-        case .size: return "大小"
-        case .addedAt: return "添加时间"
-        case .modifiedAt: return "修改时间"
+        case .name: return Preferences.shared.t("sort.name")
+        case .version: return Preferences.shared.t("sort.version")
+        case .size: return Preferences.shared.t("sort.size")
+        case .addedAt: return Preferences.shared.t("sort.addedAt")
+        case .modifiedAt: return Preferences.shared.t("sort.modifiedAt")
         }
     }
 

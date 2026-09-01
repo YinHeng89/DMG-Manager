@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 
 struct ContentView: View {
     @Environment(LibraryStore.self) private var store
+    @Environment(Preferences.self) private var prefs
 
     @State private var isSearching = false
     @State private var showFilters = false
@@ -35,35 +36,35 @@ struct ContentView: View {
             text: Binding(get: { store.searchText }, set: { store.searchText = $0 }),
             isPresented: $isSearching,
             placement: .toolbar,
-            prompt: Text("搜索名称 / 备注 / 标签 / Bundle ID")
+            prompt: Text(prefs.t("search.prompt"))
         )
         .sheet(isPresented: $showFilters) { FilterPanelView() }
         .sheet(isPresented: $showSettings) { SettingsView() }
         .confirmationDialog(
-            "从资料库中移除",
+            prefs.t("remove.fromLibrary.title"),
             isPresented: Binding(
                 get: { !pendingDeletion.isEmpty },
                 set: { if !$0 { pendingDeletion = [] } }
             ),
             presenting: pendingDeletion
         ) { ids in
-            Button("仅从资料库移除", role: .destructive) {
+            Button(prefs.t("remove.onlyMeta"), role: .destructive) {
                 store.delete(ids: ids, moveToTrash: false)
                 pendingDeletion = []
             }
-            Button("移到废纸篓", role: .destructive) {
+            Button(prefs.t("remove.toTrash"), role: .destructive) {
                 store.delete(ids: ids, moveToTrash: true)
                 pendingDeletion = []
             }
-            Button("取消", role: .cancel) { pendingDeletion = [] }
+            Button(prefs.t("remove.cancel"), role: .cancel) { pendingDeletion = [] }
         } message: { _ in
-            Text("元数据会被删除，但原始 DMG 文件不会被修改。选择「移到废纸篓」会同时删除磁盘上的文件。")
+            Text(prefs.t("remove.message"))
         }
-        .alert("出错了", isPresented: Binding(
+        .alert(prefs.t("alert.error"), isPresented: Binding(
             get: { errorMessage != nil },
             set: { if !$0 { errorMessage = nil } }
         )) {
-            Button("好") { errorMessage = nil }
+            Button(prefs.t("alert.ok")) { errorMessage = nil }
         } message: {
             Text(errorMessage ?? "")
         }
@@ -114,8 +115,8 @@ struct ContentView: View {
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = true
         panel.allowedContentTypes = [.dmg]
-        panel.message = "选择要加入资料库的 DMG 文件"
-        panel.prompt = "添加"
+        panel.message = prefs.t("panel.add.message")
+        panel.prompt = prefs.t("panel.add.prompt")
         guard panel.runModal() == .OK else { return }
         let urls = panel.urls
         guard !urls.isEmpty else { return }
@@ -128,8 +129,8 @@ struct ContentView: View {
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
-        panel.message = "选择要扫描的文件夹"
-        panel.prompt = "扫描"
+        panel.message = prefs.t("panel.scan.message")
+        panel.prompt = prefs.t("panel.scan.prompt")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         Task { _ = await store.scanFolder(url) }
     }
@@ -142,9 +143,9 @@ struct ContentView: View {
             Button {
                 presentAddPanel()
             } label: {
-                Label("添加", systemImage: "plus")
+                Label(prefs.t("tb.add"), systemImage: "plus")
             }
-            .help("添加 DMG 到资料库")
+            .help(prefs.t("tb.add.help"))
         }
 
         ToolbarItem(placement: .primaryAction) {
@@ -152,12 +153,12 @@ struct ContentView: View {
                 Button {
                     presentScanPanel()
                 } label: {
-                    Label("扫描文件夹…", systemImage: "folder.badge.magnifyingglass")
+                    Label(prefs.t("tb.scanFolder"), systemImage: "folder.badge.magnifyingglass")
                 }
                 Button {
                     Task { await store.scanAllWatchDirectories() }
                 } label: {
-                    Label("扫描所有目录", systemImage: "arrow.clockwise")
+                    Label(prefs.t("tb.scanAll"), systemImage: "arrow.clockwise")
                 }
                 .disabled(store.watchDirectories.isEmpty)
                 Button {
@@ -165,20 +166,20 @@ struct ContentView: View {
                     // 否则它们永远停在旧的解析结果上（而且不会再被扫到）。
                     Task { await store.reparse(ids: Set(store.filteredItems.map(\.id))) }
                 } label: {
-                    Label("重新解析当前列表", systemImage: "arrow.triangle.2.circlepath")
+                    Label(prefs.t("tb.reparseList"), systemImage: "arrow.triangle.2.circlepath")
                 }
                 Button {
                     Task { await store.refreshInstallStatus() }
                 } label: {
-                    Label("刷新安装状态", systemImage: "checkmark.circle")
+                    Label(prefs.t("tb.refreshInstall"), systemImage: "checkmark.circle")
                 }
                 Button {
                     Task { await store.computeMissingHashes() }
                 } label: {
-                    Label("补齐校验和", systemImage: "number")
+                    Label(prefs.t("tb.fillHashes"), systemImage: "number")
                 }
             } label: {
-                Label("操作", systemImage: "ellipsis.circle")
+                Label(prefs.t("tb.more"), systemImage: "ellipsis.circle")
             }
         }
 
@@ -186,15 +187,15 @@ struct ContentView: View {
             Button {
                 showFilters.toggle()
             } label: {
-                Label("筛选", systemImage: store.activeFilterCount == 0
+                Label(prefs.t("tb.filter"), systemImage: store.activeFilterCount == 0
                       ? "line.3.horizontal.decrease.circle"
                       : "line.3.horizontal.decrease.circle.fill")
             }
-            .help("高级筛选")
+            .help(prefs.t("tb.filter.help"))
         }
 
         ToolbarItem(placement: .primaryAction) {
-            Picker("视图", selection: Binding(
+            Picker(prefs.t("tb.view"), selection: Binding(
                 get: { store.browseMode },
                 set: { store.browseMode = $0; store.saveSettings() }
             )) {
@@ -204,7 +205,7 @@ struct ContentView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .help("切换列表 / 图标视图")
+            .help(prefs.t("tb.view.help"))
         }
     }
 
@@ -223,9 +224,9 @@ struct ContentView: View {
                 VStack(spacing: 12) {
                     Image(systemName: "opticaldisc")
                         .font(.system(size: 44))
-                    Text("松手即可加入资料库")
+                    Text(prefs.t("drop.release"))
                         .font(.title3.weight(.medium))
-                    Text("原始文件不会被移动或修改")
+                    Text(prefs.t("drop.hint"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -251,7 +252,7 @@ struct ContentView: View {
 
         group.notify(queue: .main) {
             guard !urls.isEmpty else {
-                errorMessage = "只支持 .dmg 文件"
+                errorMessage = prefs.t("drop.onlyDmg")
                 return
             }
             Task { await store.importFiles(urls) }
@@ -304,6 +305,7 @@ struct BrowserPane: View {
 /// 常驻，既展示状态，也让这一列顶部始终有固定内容（分栏竖线就不会往上穿透）。
 private struct BrowserHeaderBar: View {
     @Environment(LibraryStore.self) private var store
+    @Environment(Preferences.self) private var prefs
 
     var body: some View {
         HStack(spacing: 8) {
@@ -328,13 +330,13 @@ private struct BrowserHeaderBar: View {
 
             // 折叠掉的旧版本不算进条目数，另给一句说明，免得用户以为它们被删了
             if store.collapsedVersionCount > 0 {
-                Text("已折叠 \(store.collapsedVersionCount) 个旧版本")
+                Text(prefs.t("browser.collapsed", store.collapsedVersionCount))
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                     .monospacedDigit()
             }
 
-            Text("\(store.displayedItems.count) 项")
+            Text(prefs.t("browser.itemCount", store.displayedItems.count))
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
@@ -347,11 +349,12 @@ private struct BrowserHeaderBar: View {
 
 struct ImportProgressBanner: View {
     @Environment(LibraryStore.self) private var store
+    @Environment(Preferences.self) private var prefs
 
     private var stageTitle: String {
         switch store.importStage {
-        case .adding: return "正在添加"
-        case .parsing: return "正在解析"
+        case .adding: return prefs.t("import.adding")
+        case .parsing: return prefs.t("import.parsing")
         }
     }
 
@@ -391,13 +394,14 @@ struct ImportProgressBanner: View {
 /// 启动后自动扫库的结果提示：扫到多少、新增多少，6 秒后由 store 自动清空。
 struct ScanResultBanner: View {
     @Environment(LibraryStore.self) private var store
+    @Environment(Preferences.self) private var prefs
     let result: LibraryStore.ScanOutcome
 
     private var message: String {
         if result.added > 0 {
-            return "启动扫描完成 · 新增 \(result.added) 个 DMG（共扫描 \(result.scanned) 个文件）"
+            return prefs.t("scan.doneAdded", result.added, result.scanned)
         }
-        return "启动扫描完成 · 资料库已是最新（扫描 \(result.scanned) 个文件）"
+        return prefs.t("scan.doneLatest", result.scanned)
     }
 
     var body: some View {
@@ -427,6 +431,7 @@ struct ScanResultBanner: View {
 
 struct EmptyStateView: View {
     @Environment(LibraryStore.self) private var store
+    @Environment(Preferences.self) private var prefs
 
     var body: some View {
         ContentUnavailableView {
@@ -434,23 +439,23 @@ struct EmptyStateView: View {
         } description: {
             Text(emptyDescription)
         } actions: {
-            Button("添加 DMG") {
+            Button(prefs.t("tb.add")) {
                 NotificationCenter.default.post(name: .libraryAddFiles, object: nil)
             }
-            Button("扫描文件夹") {
+            Button(prefs.t("tb.scanFolder")) {
                 NotificationCenter.default.post(name: .libraryScanFolder, object: nil)
             }
         }
     }
 
     private var emptyTitle: String {
-        if !store.searchText.isEmpty { return "没有匹配结果" }
+        if !store.searchText.isEmpty { return prefs.t("empty.noMatch") }
         switch store.selection {
-        case .smart(.favorites): return "还没有收藏"
-        case .smart(.missing): return "没有失联文件"
-        case .smart(.duplicates): return "没有重复文件"
-        case .smart(.recentlyUsed): return "还没有打开记录"
-        default: return "资料库是空的"
+        case .smart(.favorites): return prefs.t("empty.noFavorites")
+        case .smart(.missing): return prefs.t("empty.noMissing")
+        case .smart(.duplicates): return prefs.t("empty.noDuplicates")
+        case .smart(.recentlyUsed): return prefs.t("empty.noRecent")
+        default: return prefs.t("empty.empty")
         }
     }
 
@@ -466,9 +471,9 @@ struct EmptyStateView: View {
 
     private var emptyDescription: String {
         if !store.searchText.isEmpty {
-            return "试试其他关键词，或清空搜索框。"
+            return prefs.t("empty.noMatch.hint")
         }
-        return "把 DMG 拖进窗口，或扫描整个下载文件夹。"
+        return prefs.t("empty.addHint")
     }
 }
 
@@ -630,10 +635,11 @@ private final class ShieldView: NSView {
 
 struct StatusBarView: View {
     let items: [DMGItem]
+    @Environment(Preferences.self) private var prefs
 
     var body: some View {
         HStack(spacing: 12) {
-            Text("总大小 \(ByteFormatter.string(fromBytes: items.reduce(0) { $0 + $1.fileSize }))")
+            Text(prefs.t("statusbar.totalSize", ByteFormatter.string(fromBytes: items.reduce(0) { $0 + $1.fileSize })))
             Spacer()
         }
         .font(.caption)

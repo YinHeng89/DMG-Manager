@@ -11,19 +11,19 @@ struct DMGLibraryApp: App {
         .defaultSize(width: 1180, height: 760)
         .commands {
             CommandGroup(replacing: .newItem) {
-                Button("添加 DMG…") {
+                Button(Preferences.shared.t("app.add")) {
                     NotificationCenter.default.post(name: .libraryAddFiles, object: nil)
                 }
                 .keyboardShortcut("o", modifiers: .command)
 
-                Button("扫描文件夹…") {
+                Button(Preferences.shared.t("app.scan")) {
                     NotificationCenter.default.post(name: .libraryScanFolder, object: nil)
                 }
                 .keyboardShortcut("o", modifiers: [.command, .shift])
             }
 
             CommandGroup(after: .toolbar) {
-                Button("快速搜索") {
+                Button(Preferences.shared.t("app.quickSearch")) {
                     NotificationCenter.default.post(name: .libraryFocusSearch, object: nil)
                 }
                 .keyboardShortcut("k", modifiers: .command)
@@ -34,6 +34,7 @@ struct DMGLibraryApp: App {
             StoreContainer { store in
                 MenuBarView()
                     .environment(store)
+                    .environment(Preferences.shared)
             }
         }
         .menuBarExtraStyle(.menu)
@@ -42,6 +43,7 @@ struct DMGLibraryApp: App {
             StoreContainer { store in
                 SettingsView()
                     .environment(store)
+                    .environment(Preferences.shared)
             }
         }
     }
@@ -67,7 +69,7 @@ struct StoreContainer<Content: View>: View {
         if let store = AppState.store {
             content(store)
         } else {
-            Text("数据库未就绪")
+            Text(Preferences.shared.t("app.dbNotReady"))
         }
     }
 }
@@ -82,11 +84,13 @@ struct RootView: View {
             if let store {
                 ContentView()
                     .environment(store)
+                    .environment(Preferences.shared)
+                    .preferredColorScheme(Preferences.shared.appearance.colorScheme)
             } else {
                 ContentUnavailableView {
-                    Label("无法打开数据库", systemImage: "exclamationmark.triangle.fill")
+                    Label(Preferences.shared.t("app.cannotOpen"), systemImage: "exclamationmark.triangle.fill")
                 } description: {
-                    Text("请检查 ~/Library/Application Support/DMGLibrary 是否可写。")
+                    Text(Preferences.shared.t("app.dbWritable"))
                 }
             }
         }

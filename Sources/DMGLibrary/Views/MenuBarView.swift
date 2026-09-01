@@ -3,28 +3,29 @@ import SwiftUI
 /// 菜单栏快速入口。
 struct MenuBarView: View {
     @Environment(LibraryStore.self) private var store
+    @Environment(Preferences.self) private var prefs
 
     var body: some View {
-        Button("搜索 DMG") {
+        Button(prefs.t("menu.search")) {
             activate()
             NotificationCenter.default.post(name: .libraryFocusSearch, object: nil)
         }
 
         Divider()
 
-        Button("添加 DMG…") {
+        Button(prefs.t("menu.add")) {
             activate()
             NotificationCenter.default.post(name: .libraryAddFiles, object: nil)
         }
 
-        Button("扫描文件夹…") {
+        Button(prefs.t("menu.scan")) {
             activate()
             NotificationCenter.default.post(name: .libraryScanFolder, object: nil)
         }
 
         Divider()
 
-        Menu("收藏 · \(store.count(for: .favorites))") {
+        Menu(prefs.t("menu.favorites", store.count(for: .favorites))) {
             ForEach(favorites.prefix(10)) { item in
                 Button {
                     activate()
@@ -34,11 +35,11 @@ struct MenuBarView: View {
                 }
             }
             if favorites.isEmpty {
-                Text("还没有收藏")
+                Text(prefs.t("menu.noFavorites"))
             }
         }
 
-        Menu("最近添加 · \(store.count(for: .recent))") {
+        Menu(prefs.t("menu.recent", store.count(for: .recent))) {
             ForEach(recent.prefix(10)) { item in
                 Button {
                     activate()
@@ -48,18 +49,18 @@ struct MenuBarView: View {
                 }
             }
             if recent.isEmpty {
-                Text("最近没有新增")
+                Text(prefs.t("menu.noRecent"))
             }
         }
 
         Divider()
 
-        Button("打开主窗口") {
+        Button(prefs.t("menu.openWindow")) {
             activate()
         }
 
         SettingsLink {
-            Text("设置…")
+            Text(prefs.t("menu.settings"))
         }
     }
 

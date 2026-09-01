@@ -47,7 +47,20 @@ cp "$ICON_DIR/AppIcon.icns" "$APP_PATH/Contents/Resources/AppIcon.icns"
 # ad-hoc 签名：本地运行与文件访问更顺畅
 codesign --force --deep --sign - "$APP_PATH" 2>/dev/null || true
 
-echo "==> 完成：$APP_PATH"
+echo "==> 生成 DMG 安装包"
+DMG_PATH="$DIST_DIR/$APP_NAME.dmg"
+STAGING="$DIST_DIR/.dmg-staging"
+rm -rf "$STAGING" "$DMG_PATH"
+mkdir -p "$STAGING"
+cp -R "$APP_PATH" "$STAGING/$APP_NAME.app"
+# 经典的「拖到应用程序」布局：放一个指向 /Applications 的软链
+ln -s /Applications "$STAGING/Applications"
+hdiutil create -volname "$APP_NAME" -srcfolder "$STAGING" -ov -format UDZO "$DMG_PATH"
+rm -rf "$STAGING"
+
+echo "==> 完成"
+echo "    应用：$APP_PATH"
+echo "    安装包：$DMG_PATH"
 
 if [ "$SHOULD_RUN" = true ]; then
     echo "==> 启动"

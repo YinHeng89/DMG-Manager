@@ -3,19 +3,20 @@ import SwiftUI
 struct FilterPanelView: View {
     @Environment(LibraryStore.self) private var store
     @Environment(\.dismiss) private var dismiss
+    @Environment(Preferences.self) private var prefs
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack {
-                Text("高级筛选")
+                Text(prefs.t("filter.title"))
                     .font(.headline)
                 Spacer()
                 if store.activeFilterCount > 0 {
-                    Button("清除全部") {
+                    Button(prefs.t("filter.clear")) {
                         store.filters = FilterCriteria()
                     }
                 }
-                Button("完成") { dismiss() }
+                Button(prefs.t("filter.done")) { dismiss() }
                     .buttonStyle(.borderedProminent)
             }
 
@@ -23,7 +24,7 @@ struct FilterPanelView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    FilterSection("架构", symbol: "cpu") {
+                    FilterSection(prefs.t("filter.arch"), symbol: "cpu") {
                         ToggleChips(
                             selection: Binding(
                                 get: { store.filters.architectures },
@@ -33,12 +34,12 @@ struct FilterPanelView: View {
                                 ChipOption(value: Architecture.appleSilicon, title: "Apple Silicon"),
                                 ChipOption(value: Architecture.intel, title: "Intel"),
                                 ChipOption(value: Architecture.universal, title: "Universal"),
-                                ChipOption(value: Architecture.unknown, title: "未知")
+                                ChipOption(value: Architecture.unknown, title: Architecture.unknown.displayName)
                             ]
                         )
                     }
 
-                    FilterSection("安装状态", symbol: "checkmark.circle") {
+                    FilterSection(prefs.t("filter.install"), symbol: "checkmark.circle") {
                         ToggleChips(
                             selection: Binding(
                                 get: { Set(store.filters.installStatuses.compactMap(InstallStatusFilter.init)) },
@@ -48,7 +49,7 @@ struct FilterPanelView: View {
                         )
                     }
 
-                    FilterSection("解析状态", symbol: "waveform.path.ecg") {
+                    FilterSection(prefs.t("filter.parse"), symbol: "waveform.path.ecg") {
                         ToggleChips(
                             selection: Binding(
                                 get: { store.filters.parseStatuses },
@@ -59,7 +60,7 @@ struct FilterPanelView: View {
                     }
 
                     if !store.allCategories.isEmpty {
-                        FilterSection("分类", symbol: "folder") {
+                        FilterSection(prefs.t("filter.category"), symbol: "folder") {
                             TagPicker(
                                 options: store.allCategories,
                                 selection: Binding(
@@ -71,7 +72,7 @@ struct FilterPanelView: View {
                     }
 
                     if !store.tagCounts.isEmpty {
-                        FilterSection("标签", symbol: "tag") {
+                        FilterSection(prefs.t("filter.tag"), symbol: "tag") {
                             TagPicker(
                                 options: store.tagCounts.map(\.name),
                                 selection: Binding(

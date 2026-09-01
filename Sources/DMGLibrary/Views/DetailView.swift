@@ -3,6 +3,7 @@ import UniformTypeIdentifiers
 
 struct DetailPane: View {
     @Environment(LibraryStore.self) private var store
+    @Environment(Preferences.self) private var prefs
     let item: DMGItem?
 
     var body: some View {
@@ -15,9 +16,9 @@ struct DetailPane: View {
                 // 未选中态：提示在整列居中（和以前一致），固定顶栏作为覆盖层防止竖线穿透
                 ZStack(alignment: .top) {
                     ContentUnavailableView {
-                        Label("未选择安装包", systemImage: "opticaldisc")
+                        Label(prefs.t("detail.none.title"), systemImage: "opticaldisc")
                     } description: {
-                        Text("从中间列表里选一个 DMG，这里会显示它的全部信息。")
+                        Text(prefs.t("detail.none.desc"))
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
@@ -51,6 +52,7 @@ enum NoteSaveState {
 
 private struct DetailEditor: View {
     @Environment(LibraryStore.self) private var store
+    @Environment(Preferences.self) private var prefs
     let item: DMGItem
 
     @State private var draft: DMGItem
@@ -121,43 +123,43 @@ private struct DetailEditor: View {
         ) { (result: Result<URL, Error>) in
             if case .success(let url) = result {
                 store.relocate(id: item.id, to: url)
-                flash("已重新定位到 \(url.lastPathComponent)")
+                flash(prefs.t("flash.relocated", url.lastPathComponent))
             }
         }
-        .confirmationDialog("安装到 /Applications", isPresented: $confirmInstall) {
-            Button("安装") {
+        .confirmationDialog(prefs.t("install.title"), isPresented: $confirmInstall) {
+            Button(prefs.t("install.confirm")) {
                 Task {
                     do {
                         try await store.installApp(item)
-                        flash("已复制到 /Applications")
+                        flash(prefs.t("flash.copied"))
                     } catch {
-                        flash("安装失败：\(error.localizedDescription)")
+                        flash(prefs.t("flash.installFailed", error.localizedDescription))
                     }
                 }
             }
-            Button("取消", role: .cancel) { }
+            Button(prefs.t("install.cancel"), role: .cancel) { }
         } message: {
-            Text("会把 DMG 内的 \(item.appName ?? "App") 复制到 /Applications。已存在的同名 App 会先移到废纸篓。")
+            Text(prefs.t("install.message", item.appName ?? "App"))
         }
-        .confirmationDialog("删除", isPresented: $confirmDelete) {
-            Button("仅从资料库移除", role: .destructive) {
+        .confirmationDialog(prefs.t("delete.title"), isPresented: $confirmDelete) {
+            Button(prefs.t("delete.onlyMeta"), role: .destructive) {
                 store.delete(ids: [item.id], moveToTrash: false)
             }
-            Button("移到废纸篓", role: .destructive) {
+            Button(prefs.t("delete.toTrash"), role: .destructive) {
                 store.delete(ids: [item.id], moveToTrash: true)
             }
-            Button("取消", role: .cancel) { }
+            Button(prefs.t("delete.cancel"), role: .cancel) { }
         } message: {
-            Text("删除后这条记录的名称、备注、标签都会消失。原始 DMG 只有在「移到废纸篓」时才会被删除。")
+            Text(prefs.t("delete.message"))
         }
-        .confirmationDialog("从资料库移除", isPresented: $confirmRemoveMissing) {
-            Button("移除这条记录", role: .destructive) {
+        .confirmationDialog(prefs.t("remove.title"), isPresented: $confirmRemoveMissing) {
+            Button(prefs.t("remove.confirm"), role: .destructive) {
                 store.delete(ids: [item.id], moveToTrash: false)
-                flash("已从资料库移除")
+                flash(prefs.t("flash.removed"))
             }
-            Button("取消", role: .cancel) { }
+            Button(prefs.t("remove.cancel"), role: .cancel) { }
         } message: {
-            Text("原始文件已不在磁盘上（可能是你自己删掉的）。确认只把这条资料库记录移除，不会动磁盘。")
+            Text(prefs.t("remove.message"))
         }
     }
 
@@ -171,7 +173,7 @@ private struct DetailEditor: View {
             AppIconView(filename: item.iconFilename, size: 54)
 
             VStack(alignment: .leading, spacing: 3) {
-                TextField("显示名称", text: $draft.displayName)
+                TextField(prefs.t("detail.name.placeholder"), text: $draft.displayName)
                     .textFieldStyle(.plain)
                     .font(.title3.weight(.semibold))
                     .onSubmit { save() }
@@ -179,7 +181,7 @@ private struct DetailEditor: View {
 
                 HStack(spacing: 6) {
                     if let version = item.version, !version.isEmpty {
-                        Text("版本 \(version)")
+                        Text("\(prefs.t("detail.version")) \(version)")
                     }
                     if let build = item.build, !build.isEmpty {
                         Text("(\(build))")
@@ -206,7 +208,7 @@ private struct DetailEditor: View {
             }
             .buttonStyle(.borderless)
             .foregroundStyle(draft.favorite ? .yellow : .secondary)
-            .help(draft.favorite ? "取消收藏" : "收藏")
+            .help(draft.favorite ? prefs.t("detail.fav.on") : prefs.t("detail.fav.off"))
         }
     }
 
@@ -214,25 +216,25 @@ private struct DetailEditor: View {
 
     private var missingBanner: some View {
         VStack(alignment: .center, spacing: 10) {
-            Label("文件位置已改变", systemImage: "exclamationmark.triangle.fill")
+            Label(prefs.t("missing.title"), systemImage: "exclamationmark.triangle.fill")
                 .font(.callout.weight(.medium))
                 .foregroundStyle(.orange)
-            Text("原始路径：\(item.path)")
+            Text(prefs.t("missing.path") + item.path)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: .infinity, alignment: .center)
             HStack(spacing: 8) {
-                Button("重新定位…") { showRelocate = true }
+                Button(prefs.t("missing.relocate")) { showRelocate = true }
                     .buttonStyle(.borderedProminent)
-                Button("自动查找…") {
+                Button(prefs.t("missing.auto")) {
                     Task {
                         await store.refreshFileStatus()
-                        flash(store.item(id: item.id)?.exists == true ? "已自动重新连接" : "没有找到匹配的文件")
+                        flash(store.item(id: item.id)?.exists == true ? prefs.t("flash.reconnected") : prefs.t("flash.notFound"))
                     }
                 }
-                Button("从资料库移除") { confirmRemoveMissing = true }
+                Button(prefs.t("missing.remove")) { confirmRemoveMissing = true }
                     .foregroundStyle(.red)
             }
             .frame(maxWidth: .infinity)
@@ -270,22 +272,22 @@ private struct DetailEditor: View {
     /// 每个按钮内部是「图标在左、文字在右」的横排（见 ActionButton）。
     private var actions: some View {
         FlowLayout(spacing: 8) {
-            ActionButton("打开", symbol: "arrow.up.forward.square") { store.open(item) }
-            ActionButton("Finder", symbol: "folder") { store.revealInFinder(item) }
+            ActionButton(prefs.t("action.open"), symbol: "arrow.up.forward.square") { store.open(item) }
+            ActionButton(prefs.t("action.finder"), symbol: "folder") { store.revealInFinder(item) }
             if store.mountedVolumes[item.id] != nil {
-                ActionButton("卸载", symbol: "eject") { store.unmount(item) }
-                ActionButton("显示卷", symbol: "externaldrive") { store.revealMountedVolume(item) }
+                ActionButton(prefs.t("action.unmount"), symbol: "eject") { store.unmount(item) }
+                ActionButton(prefs.t("action.showVolume"), symbol: "externaldrive") { store.revealMountedVolume(item) }
             } else {
-                ActionButton("挂载", symbol: "externaldrive.badge.plus") {
+                ActionButton(prefs.t("action.mount"), symbol: "externaldrive.badge.plus") {
                     Task { await store.mount(item) }
                 }
             }
-            ActionButton("复制路径", symbol: "doc.on.doc") {
+            ActionButton(prefs.t("action.copyPath"), symbol: "doc.on.doc") {
                 store.copyPath(item)
-                flash("路径已复制")
+                flash(prefs.t("flash.pathCopied"))
             }
             if item.appRelativePath != nil {
-                ActionButton("安装", symbol: "arrow.right.doc.on.clipboard") { confirmInstall = true }
+                ActionButton(prefs.t("action.install"), symbol: "arrow.right.doc.on.clipboard") { confirmInstall = true }
             }
         }
         .disabled(!item.exists)
@@ -295,25 +297,25 @@ private struct DetailEditor: View {
 
     private var metadataSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SectionHeader(title: "安装包信息", symbol: "info.circle")
+            SectionHeader(title: prefs.t("meta.title"), symbol: "info.circle")
 
             VStack(alignment: .leading, spacing: 6) {
-                MetadataRow(label: "原始文件", value: item.filename)
-                MetadataRow(label: "大小", value: ByteFormatter.string(fromBytes: item.fileSize))
-                if let appName = item.appName { MetadataRow(label: "App 名称", value: appName) }
-                if let developer = item.developer { MetadataRow(label: "开发者", value: developer) }
-                if let bundleID = item.bundleID { MetadataRow(label: "Bundle ID", value: bundleID, monospaced: true) }
-                if let minimumOS = item.minimumOS { MetadataRow(label: "最低系统", value: "macOS \(minimumOS)") }
+                MetadataRow(label: prefs.t("meta.file"), value: item.filename)
+                MetadataRow(label: prefs.t("meta.size"), value: ByteFormatter.string(fromBytes: item.fileSize))
+                if let appName = item.appName { MetadataRow(label: prefs.t("meta.appName"), value: appName) }
+                if let developer = item.developer { MetadataRow(label: prefs.t("meta.developer"), value: developer) }
+                if let bundleID = item.bundleID { MetadataRow(label: prefs.t("meta.bundleID"), value: bundleID, monospaced: true) }
+                if let minimumOS = item.minimumOS { MetadataRow(label: prefs.t("meta.minOS"), value: "macOS \(minimumOS)") }
                 if let installed = item.installedVersion {
-                    MetadataRow(label: "已安装", value: installed)
+                    MetadataRow(label: prefs.t("meta.installed"), value: installed)
                 }
                 if let modified = item.fileModifiedAt {
-                    MetadataRow(label: "修改时间", value: DateFormatterHelper.full.string(from: modified))
+                    MetadataRow(label: prefs.t("meta.modified"), value: DateFormatterHelper.full.string(from: modified))
                 }
                 if let sha = item.sha256, !sha.isEmpty {
-                    MetadataRow(label: "SHA-256", value: sha, monospaced: true)
+                    MetadataRow(label: prefs.t("meta.sha"), value: sha, monospaced: true)
                 }
-                MetadataRow(label: "路径", value: item.path, monospaced: true)
+                MetadataRow(label: prefs.t("meta.path"), value: item.path, monospaced: true)
             }
         }
     }
@@ -326,20 +328,20 @@ private struct DetailEditor: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: "note.text").foregroundStyle(.secondary)
-                Text("备注").font(.headline)
+                Text(prefs.t("note.title")).font(.headline)
                 Spacer()
                 if saveState == .saved {
-                    Label("已保存", systemImage: "checkmark.circle.fill")
+                    Label(prefs.t("note.saved"), systemImage: "checkmark.circle.fill")
                         .font(.caption2)
                         .foregroundStyle(.green)
                 } else if saveState == .saving {
-                    Label("保存中…", systemImage: "arrow.triangle.2.circlepath")
+                    Label(prefs.t("note.saving"), systemImage: "arrow.triangle.2.circlepath")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
-                Picker("模式", selection: $showPreview) {
-                    Text("预览").tag(true)
-                    Text("编辑").tag(false)
+                Picker(prefs.t("note.mode"), selection: $showPreview) {
+                    Text(prefs.t("note.preview")).tag(true)
+                    Text(prefs.t("note.edit")).tag(false)
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 116)
@@ -354,7 +356,7 @@ private struct DetailEditor: View {
                         .padding(10)
                         .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
                 } else {
-                    Text(draft.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "暂无备注" : draft.note)
+                    Text(draft.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? prefs.t("note.empty") : draft.note)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(10)
@@ -395,7 +397,7 @@ private struct DetailEditor: View {
             .filter { !draft.tags.contains($0) }
 
         return VStack(alignment: .leading, spacing: 8) {
-            SectionHeader(title: "标签", symbol: "tag")
+            SectionHeader(title: prefs.t("tag.title"), symbol: "tag")
 
             FlowLayout(spacing: 6) {
                 ForEach(draft.tags, id: \.self) { tag in
@@ -406,7 +408,7 @@ private struct DetailEditor: View {
                     Image(systemName: "plus")
                         .font(.caption2.weight(.medium))
                         .foregroundStyle(.secondary)
-                    TextField("添加标签", text: $newTag)
+                    TextField(prefs.t("tag.add"), text: $newTag)
                         .textFieldStyle(.plain)
                         .onSubmit(addTag)
                 }
@@ -419,7 +421,7 @@ private struct DetailEditor: View {
 
             if !suggestions.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("常用标签")
+                    Text(prefs.t("tag.suggested"))
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                     FlowLayout(spacing: 6) {
@@ -476,7 +478,7 @@ private struct DetailEditor: View {
 
     private var categorySection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SectionHeader(title: "分类", symbol: "folder")
+            SectionHeader(title: prefs.t("category.title"), symbol: "folder")
             FlowLayout(spacing: 6) {
                 ForEach(store.allCategories, id: \.self) { category in
                     CategoryChip(
@@ -488,7 +490,7 @@ private struct DetailEditor: View {
                         },
                         onDelete: isCustomCategory(category) ? { deleteCategory(category) } : nil,
                         blockedReason: store.isCategoryInUse(category)
-                            ? "有条目正在使用这个分类，不能删除"
+                            ? prefs.t("category.blocked")
                             : nil
                     )
                 }
@@ -498,7 +500,7 @@ private struct DetailEditor: View {
                     Image(systemName: "plus")
                         .font(.caption2.weight(.medium))
                         .foregroundStyle(.secondary)
-                    TextField("新建分类", text: $newCategoryName)
+                    TextField(prefs.t("category.new"), text: $newCategoryName)
                         .textFieldStyle(.plain)
                         .onSubmit(addNewCategory)
                 }
@@ -534,7 +536,7 @@ private struct DetailEditor: View {
 
     private var versionSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SectionHeader(title: "版本库 · \(versionGroup.count) 个版本", symbol: "clock.arrow.circlepath")
+            SectionHeader(title: prefs.t("version.title", versionGroup.count), symbol: "clock.arrow.circlepath")
 
             VStack(spacing: 4) {
                 ForEach(versionGroup) { member in
@@ -553,7 +555,7 @@ private struct DetailEditor: View {
                 }
             }
 
-            Text("列表默认显示最新版本，切换后上方信息随之更新。")
+            Text(prefs.t("version.hint"))
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
@@ -563,14 +565,14 @@ private struct DetailEditor: View {
 
     private var footerActions: some View {
         HStack {
-            Button("重新解析") {
+            Button(prefs.t("footer.reparse")) {
                 Task { await store.reparse(ids: [item.id]) }
             }
             Spacer()
             Button(role: .destructive) {
                 confirmDelete = true
             } label: {
-                Label("删除", systemImage: "trash")
+                Label(prefs.t("footer.delete"), systemImage: "trash")
             }
         }
         .padding(.top, 8)
@@ -646,14 +648,15 @@ struct VersionRow: View {
     let isCurrent: Bool
     /// 组内版本最高的那条。列表默认展示的就是它，标出来方便用户认路。
     var isLatest = false
+    @Environment(Preferences.self) private var prefs
 
     var body: some View {
         HStack(spacing: 10) {
             AppIconView(filename: item.iconFilename, size: 22)
-            Text(item.version ?? "未知版本")
+            Text(item.version ?? prefs.t("unknown.version"))
                 .font(.callout)
             if isLatest {
-                Text("最新")
+                Text(prefs.t("version.latest"))
                     .font(.caption2)
                     .foregroundStyle(.green)
                     .padding(.horizontal, 6)

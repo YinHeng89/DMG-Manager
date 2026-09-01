@@ -8,18 +8,21 @@ import SwiftUI
 /// 连同标签栏都会被重绘；解析时 `items` 每解析完一个条目就变一次，标签栏图标就会一直抖。
 /// 拆成独立 View 后，只有真正数据变了的那一个页面会重绘，标签栏始终不动。
 struct SettingsView: View {
+    @Environment(Preferences.self) private var prefs
+
     var body: some View {
         TabView {
             GeneralSettingsTab()
-                .tabItem { Label("通用", systemImage: "gearshape") }
+                .tabItem { Label(prefs.t("settings.general"), systemImage: "gearshape") }
             LibrarySettingsTab()
-                .tabItem { Label("资料库", systemImage: "externaldrive") }
+                .tabItem { Label(prefs.t("settings.library"), systemImage: "externaldrive") }
             DataSettingsTab()
-                .tabItem { Label("数据", systemImage: "internaldrive") }
+                .tabItem { Label(prefs.t("settings.data"), systemImage: "internaldrive") }
             AboutSettingsTab()
-                .tabItem { Label("关于", systemImage: "info.circle") }
+                .tabItem { Label(prefs.t("settings.about"), systemImage: "info.circle") }
         }
         .frame(width: 520, height: 460)
+        .preferredColorScheme(prefs.appearance.colorScheme)
     }
 }
 
@@ -27,18 +30,37 @@ struct SettingsView: View {
 
 private struct GeneralSettingsTab: View {
     @Environment(LibraryStore.self) private var store
+    @Environment(Preferences.self) private var prefs
 
     var body: some View {
         Form {
-            Picker("默认视图", selection: Binding(
+            Picker(prefs.t("settings.language"), selection: Binding(
+                get: { prefs.language },
+                set: { prefs.setLanguage($0) }
+            )) {
+                ForEach(AppLanguage.allCases) { lang in
+                    Text(lang.label).tag(lang)
+                }
+            }
+
+            Picker(prefs.t("settings.appearance"), selection: Binding(
+                get: { prefs.appearance },
+                set: { prefs.setAppearance($0) }
+            )) {
+                ForEach(AppAppearance.allCases) { value in
+                    Text(appearanceTitle(value)).tag(value)
+                }
+            }
+
+            Picker(prefs.t("settings.defaultView"), selection: Binding(
                 get: { store.browseMode },
                 set: { store.browseMode = $0; store.saveSettings() }
             )) {
-                Text("列表").tag(BrowseMode.list)
-                Text("图标").tag(BrowseMode.grid)
+                Text(prefs.t("settings.list")).tag(BrowseMode.list)
+                Text(prefs.t("settings.grid")).tag(BrowseMode.grid)
             }
 
-            Picker("排序", selection: Binding(
+            Picker(prefs.t("settings.sort"), selection: Binding(
                 get: { store.sortField },
                 set: { store.sortField = $0 }
             )) {
@@ -47,13 +69,21 @@ private struct GeneralSettingsTab: View {
                 }
             }
 
-            Toggle("升序排列", isOn: Binding(
+            Toggle(prefs.t("settings.ascending"), isOn: Binding(
                 get: { store.sortAscending },
                 set: { store.sortAscending = $0 }
             ))
         }
         .formStyle(.grouped)
         .padding()
+    }
+
+    private func appearanceTitle(_ value: AppAppearance) -> String {
+        switch value {
+        case .system: return prefs.t("appearance.system")
+        case .light: return prefs.t("appearance.light")
+        case .dark: return prefs.t("appearance.dark")
+        }
     }
 }
 
@@ -66,6 +96,7 @@ private struct GeneralSettingsTab: View {
 /// 扫描与解析统一由主窗口的「操作」菜单负责，进度也在主窗口显示。
 private struct LibrarySettingsTab: View {
     @Environment(LibraryStore.self) private var store
+    @Environment(Preferences.self) private var prefs
 
     @State private var showFolderPicker = false
 
@@ -87,7 +118,7 @@ private struct LibrarySettingsTab: View {
         Form {
             Section {
                 if directoryInfo.isEmpty {
-                    Text("还没有添加目录")
+                    Text(prefs.t("settings.noDirs"))
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(directoryInfo) { info in
@@ -98,14 +129,14 @@ private struct LibrarySettingsTab: View {
                 Button {
                     showFolderPicker = true
                 } label: {
-                    Label("添加目录…", systemImage: "plus")
+                    Label(prefs.t("settings.addDir"), systemImage: "plus")
                 }
             } header: {
                 // 叫「扫描目录」而不是「监控目录」：这里没有后台文件监听，
                 // 目录只用于扫描导入和失联文件找回。
-                Text("扫描目录")
+                Text(prefs.t("settings.scanDirs"))
             } footer: {
-                Text("目录用于扫描导入 DMG，以及文件失联时找回原文件。移除目录只是不再扫描它，已入库的条目会保留。导入与解析请在主窗口的「操作」菜单里进行。")
+                Text(prefs.t("settings.scanDirs.footer"))
             }
         }
         .formStyle(.grouped)
@@ -126,9 +157,9 @@ private struct LibrarySettingsTab: View {
 
     private func directoryRow(_ info: DirectoryInfo) -> some View {
         HStack(spacing: 6) {
-            Image(systemName: info.exists ? "folder" : "exclamationmark.triangle.fill")
-                .foregroundStyle(info.exists ? Color.secondary : Color.orange)
-                .help(info.exists ? "" : "目录已不存在，可能已被删除或移动")
+                Image(systemName: info.exists ? "folder" : "exclamationmark.triangle.fill")
+                    .foregroundStyle(info.exists ? Color.secondary : Color.orange)
+                    .help(info.exists ? "" : prefs.t("settings.dirMissing"))
 
             Text(info.url.path)
                 .lineLimit(1)
@@ -136,7 +167,7 @@ private struct LibrarySettingsTab: View {
 
             Spacer()
 
-            Text("\(info.count) 项")
+            Text(prefs.t("browser.itemCount", info.count))
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
@@ -147,7 +178,7 @@ private struct LibrarySettingsTab: View {
                 Image(systemName: "minus.circle")
             }
             .buttonStyle(.plain)
-            .help("移除目录（不会删除已入库的条目）")
+            .help(prefs.t("settings.removeDir.help"))
         }
     }
 
@@ -162,6 +193,7 @@ private struct LibrarySettingsTab: View {
 
 private struct DataSettingsTab: View {
     @Environment(LibraryStore.self) private var store
+    @Environment(Preferences.self) private var prefs
     @State private var showBackupDone = false
 
     var body: some View {
@@ -172,53 +204,53 @@ private struct DataSettingsTab: View {
                     .textSelection(.enabled)
 
                 HStack {
-                    Button("在 Finder 中显示") {
+                    Button(prefs.t("settings.showInFinder")) {
                         NSWorkspace.shared.activateFileViewerSelecting([AppPaths.database])
                     }
-                    Button("打开图标缓存") {
+                    Button(prefs.t("settings.openIconCache")) {
                         NSWorkspace.shared.open(AppPaths.thumbnails)
                     }
                 }
             } header: {
-                Text("数据位置")
+                Text(prefs.t("settings.dataLocation"))
             }
 
             Section {
                 HStack {
-                    Button("立即备份") {
+                    Button(prefs.t("settings.backupNow")) {
                         BackupService.snapshot(database: AppPaths.database)
                         showBackupDone = true
                     }
                     if showBackupDone {
-                        Label("已备份", systemImage: "checkmark.circle.fill")
+                        Label(prefs.t("settings.backedUp"), systemImage: "checkmark.circle.fill")
                             .font(.caption)
                             .foregroundStyle(.green)
                     }
-                    Button("打开备份目录") {
+                    Button(prefs.t("settings.openBackupDir")) {
                         NSWorkspace.shared.open(AppPaths.backups)
                     }
                 }
             } header: {
-                Text("备份")
+                Text(prefs.t("settings.backup"))
             } footer: {
-                Text("启动时自动快照，最多保留 \(BackupService.keepCount) 份。数据库使用 WAL 模式，崩溃也不会丢备注。")
+                Text(prefs.t("settings.backup.footer", BackupService.keepCount))
             }
 
             // LabeledContent 让数值右对齐：解析时数字变化只影响左边缘，不会顶高整行。
-            Section("统计") {
-                LabeledContent("安装包") {
+            Section(prefs.t("settings.stats")) {
+                LabeledContent(prefs.t("settings.stat.packages")) {
                     Text("\(store.items.count)")
                         .monospacedDigit()
                 }
-                LabeledContent("标签") {
+                LabeledContent(prefs.t("settings.stat.tags")) {
                     Text("\(store.tagCounts.count)")
                         .monospacedDigit()
                 }
-                LabeledContent("分类") {
+                LabeledContent(prefs.t("settings.stat.categories")) {
                     Text("\(store.categoryCounts.count)")
                         .monospacedDigit()
                 }
-                LabeledContent("总大小") {
+                LabeledContent(prefs.t("settings.stat.totalSize")) {
                     Text(ByteFormatter.string(fromBytes: store.items.reduce(0) { $0 + $1.fileSize }))
                         .monospacedDigit()
                 }
@@ -232,6 +264,8 @@ private struct DataSettingsTab: View {
 // MARK: - 关于
 
 private struct AboutSettingsTab: View {
+    @Environment(Preferences.self) private var prefs
+
     var body: some View {
         VStack(spacing: 16) {
             Image(systemName: "opticaldisc")
@@ -241,20 +275,20 @@ private struct AboutSettingsTab: View {
             VStack(spacing: 4) {
                 Text("DMG Library")
                     .font(.title2.weight(.semibold))
-                Text("一个不改变原始文件的 Mac 安装包资料库")
+                Text(prefs.t("about.subtitle"))
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
 
-            Text("Keep the file. Organize the meaning.\n文件不动，信息由你定义。")
+            Text(prefs.t("about.tagline"))
                 .font(.callout)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
 
             VStack(alignment: .leading, spacing: 6) {
-                Label("无账号、无服务器、无云端、无遥测", systemImage: "lock.fill")
-                Label("所有数据只存在你的 Mac 上", systemImage: "internaldrive")
-                Label("原始 DMG 永不被重命名、移动或修改", systemImage: "hand.raised.fill")
+                Label(prefs.t("about.noAccount"), systemImage: "lock.fill")
+                Label(prefs.t("about.localOnly"), systemImage: "internaldrive")
+                Label(prefs.t("about.untouched"), systemImage: "hand.raised.fill")
             }
             .font(.callout)
             .frame(maxWidth: .infinity, alignment: .leading)

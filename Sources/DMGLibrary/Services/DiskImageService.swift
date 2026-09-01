@@ -42,7 +42,7 @@ enum DiskImageService {
               let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
               let entities = plist["system-entities"] as? [[String: Any]] else {
             let detail = stderrText.trimmingCharacters(in: .whitespacesAndNewlines)
-            throw DMGServiceError.attachFailed(imageURL.path, detail: detail.isEmpty ? "hdiutil 返回 \(process.terminationStatus)" : detail)
+            throw DMGServiceError.attachFailed(imageURL.path, detail: detail.isEmpty ? Preferences.shared.t("disk.attachReturned", process.terminationStatus) : detail)
         }
 
         for entity in entities {
@@ -53,7 +53,7 @@ enum DiskImageService {
                 )
             }
         }
-        throw DMGServiceError.attachFailed(imageURL.path, detail: "镜像内没有可挂载的文件系统")
+        throw DMGServiceError.attachFailed(imageURL.path, detail: Preferences.shared.t("disk.noFilesystem"))
     }
 
     static func detach(mountPoint: URL) {

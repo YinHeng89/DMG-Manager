@@ -1679,6 +1679,8 @@ Sources/
     ├── ViewModels/
     │   ├── LibraryStore.swift      单一数据源（@Observable）
     │   └── LibraryFiltering.swift  搜索 / 筛选 / 排序
+    ├── Utils/
+    │   └── Preferences.swift       全局偏好（语言 / 外观）+ 代码内本地化表
     └── Views/                     三栏界面、详情、筛选面板、设置
 ```
 
@@ -1720,6 +1722,25 @@ Sources/
 - **版本库切换联动**：详情「版本库」列出组内全部成员（最新优先），点击任意版本即切换 `selectedItemID`，标题、版本、架构、安装状态与「安装包信息」整块跟随更新（各版本本就是独立记录）。当前项按 id 判定，不再硬编码第一行。
 - **详情操作按钮固定**：包信息界面的操作按钮排从滚动区内移出，固定在「架构 / 状态徽章」一行的正下方，不随下方信息滚动。
 - **性能优化**：`groupIndexCache` 一次 O(n) 建索引后 `relatedVersions` / 代表项选取 / 版本计数全 O(1)；`duplicateGroups` 加缓存；重复筛选 O(n²) → `Set`；修复逐行选中态判定曾退化的 O(n²)（改由 `representativeID` 直接查表）。
+
+### V1.3（国际化 + 深色浅色，已全部完成）
+
+- **国际化（简体中文 / English）**：新增 `Utils/Preferences.swift`，用**代码内本地化表**（`[String: [AppLanguage: String]]`）替代 `.strings` 资源——因为当前 `build.sh` 用 SwiftPM 打包 `.app` 时不会复制字符串资源，代码内表可保证文案一定被打包进去。
+  - 查表入口 `Preferences.t(_:args:)` 支持 `%d` / `%@` 占位符（`String(format:)`），缺失 key 回落中文、再回落 key 本身；所有用户可见中文（含服务层错误串，如「文件已消失」「DMG 内无 App」）统一路由到 `t(...)`。
+  - 新增语言只需在 table 每行补一列，无需改动调用点；语言默认跟随系统 `Locale.preferredLanguages`。
+  - 切换入口：**设置 → 通用 → 语言**（简体中文 / English），持久化到 `UserDefaults`。
+- **深色 / 浅色 / 跟随系统**：外观同样在 `Preferences` 中管理（`system` / `light` / `dark`）。`Preferences.shared` 经 `.environment(...)` 注入各 Scene，再经 `.preferredColorScheme(prefs.appearance.colorScheme)` 应用——`system` 返回 `nil` 交给 macOS 自动切换。
+  - 切换入口：**设置 → 通用 → 外观**（跟随系统 / 浅色 / 深色），持久化到 `UserDefaults`。
+- 新增文件 `Sources/DMGLibrary/Utils/Preferences.swift`；改动 `DMGLibraryApp` / `Enums` / `ContentView` / `DetailView` / `Components` / `SidebarView` / `FilterPanelView` / `MenuBarView` / `SettingsView` / `DMGInspectionService` / `DiskImageService` 共 11 个文件接入 `t(...)` 与 `prefs` 环境。
+
+### 产品官网（`Web/`）
+
+- 在仓库 `Web/` 目录提供**产品官网**：纯 HTML / CSS / JS，**零外部依赖**，可直接用任意静态服务器或 `build.sh` 产物旁托管。
+  - `index.html`：导航栏 + 主题切换按钮、Hero（含仿三栏界面 mock，tagline「Keep the file. Organize the meaning.」）、9 张功能卡片、隐私四宫格（无账号 / 无服务器 / 无云端 / 无遥测）、下载区（按钮指向 `../dist/DMG Library.dmg`）、页脚。
+  - `styles.css`：`:root` 浅色变量 + `[data-theme="dark"]` 深色变量；导航 sticky / 毛玻璃、Hero 渐变、mock UI、响应式 grid（含移动端折叠）。
+  - `script.js`：主题切换（localStorage 记忆 + 跟随系统）、页脚年份自动填充。
+  - `README.md`：站点说明与本地预览方式。
+- 本地预览：`cd Web && python3 -m http.server 8000`，浏览器打开 `http://localhost:8000`。
 
 ### V2（未实现，按方案属后续版本）
 

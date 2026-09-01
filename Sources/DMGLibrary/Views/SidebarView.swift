@@ -2,13 +2,14 @@ import SwiftUI
 
 struct SidebarView: View {
     @Environment(LibraryStore.self) private var store
+    @Environment(Preferences.self) private var prefs
 
     var body: some View {
         List(selection: Binding(
             get: { store.selection },
             set: { store.selection = $0 }
         )) {
-            Section("资料库") {
+            Section(prefs.t("sidebar.library")) {
                 ForEach([SmartList.all, .favorites, .recent, .recentlyUsed, .missing, .duplicates]) { list in
                     Label {
                         HStack {
@@ -47,11 +48,11 @@ struct SidebarView: View {
                     .tag(SidebarSelection.category(category))
                 }
             } header: {
-                Text("分类")
+                Text(prefs.t("sidebar.categories"))
             }
 
             if !store.tagCounts.isEmpty {
-                Section("标签") {
+                Section(prefs.t("sidebar.tags")) {
                     ForEach(store.tagCounts, id: \.name) { entry in
                         Label {
                             HStack {

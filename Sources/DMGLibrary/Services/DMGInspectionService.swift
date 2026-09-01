@@ -15,7 +15,7 @@ struct InspectionResult {
 enum DMGInspectionService {
     static func inspect(fileURL: URL, iconName: String = UUID().uuidString) -> InspectionResult {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            return InspectionResult(status: .missing, errorMessage: "原始文件已不存在")
+            return InspectionResult(status: .missing, errorMessage: Preferences.shared.t("parse.fileGone"))
         }
 
         let volume: MountedVolume
@@ -28,7 +28,7 @@ enum DMGInspectionService {
         defer { DiskImageService.detach(mountPoint: volume.mountPoint) }
 
         guard let appURL = AppBundleInspector.findApps(in: volume.mountPoint).first else {
-            return InspectionResult(status: .noApp, volumeName: volume.volumeName, errorMessage: "镜像内没有找到 .app")
+            return InspectionResult(status: .noApp, volumeName: volume.volumeName, errorMessage: Preferences.shared.t("parse.noAppInside"))
         }
 
         let appInfo = AppBundleInspector.inspect(appURL: appURL, mountPoint: volume.mountPoint)

@@ -50,31 +50,32 @@ struct AppIconView: View {
 struct StatusBadge: View {
     let item: DMGItem
     @Environment(LibraryStore.self) private var store
+    @Environment(Preferences.self) private var prefs
 
     var body: some View {
         // 通过 store.presence（被 Observation 追踪）判断存在性：外部删/恢复文件时才会驱动重绘；
         // 直接读 item.exists 是 computed，不含变化通知，界面会卡在旧状态。
         let exists = store.presence[item.id] ?? item.exists
         if !exists {
-            badge("文件失联", symbol: "exclamationmark.triangle.fill", color: .orange)
+            badge(prefs.t("parse.missing"), symbol: "exclamationmark.triangle.fill", color: .orange)
         } else if item.parseStatus == .parsing {
-            badge("解析中", symbol: "arrow.triangle.2.circlepath", color: .blue)
+            badge(prefs.t("parse.parsing"), symbol: "arrow.triangle.2.circlepath", color: .blue)
         } else if item.parseStatus == .pending {
-            badge("等待解析", symbol: "clock", color: .secondary)
+            badge(prefs.t("parse.pending"), symbol: "clock", color: .secondary)
         } else if item.parseStatus == .failed {
-            badge("解析失败", symbol: "exclamationmark.triangle.fill", color: .red)
+            badge(prefs.t("parse.failed"), symbol: "exclamationmark.triangle.fill", color: .red)
         } else if item.parseStatus == .noApp {
-            badge("无 App", symbol: "doc.circle", color: .secondary)
+            badge(prefs.t("parse.noApp"), symbol: "doc.circle", color: .secondary)
         } else {
             switch item.installStatus {
             case .installed:
-                badge("已安装", symbol: "checkmark.circle.fill", color: .green)
+                badge(prefs.t("install.installed"), symbol: "checkmark.circle.fill", color: .green)
             case .outdated(let version):
-                badge("旧版本 · 已装 \(version)", symbol: "arrow.down.circle.fill", color: .blue)
+                badge(prefs.t("status.outdated.installed", version), symbol: "arrow.down.circle.fill", color: .blue)
             case .newerThanInstalled(let version):
-                badge("可升级 · 已装 \(version)", symbol: "arrow.up.circle.fill", color: .purple)
+                badge(prefs.t("status.upgrade.installed", version), symbol: "arrow.up.circle.fill", color: .purple)
             case .notInstalled:
-                badge("未安装", symbol: "circle", color: .secondary)
+                badge(prefs.t("install.notInstalled"), symbol: "circle", color: .secondary)
             case .unknown:
                 badge(item.parseStatus.displayName, symbol: item.parseStatus.symbolName, color: .secondary)
             }
