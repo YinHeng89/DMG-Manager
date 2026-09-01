@@ -435,6 +435,7 @@ private final class WindowFixView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     private weak var split: NSSplitView?
+    private weak var splitController: NSSplitViewController?
     private var shield: ShieldView?
     private var frameObserver: NSObjectProtocol?
 
@@ -464,17 +465,21 @@ private final class WindowFixView: NSView {
             window.titlebarSeparatorStyle = .line
         }
 
-        if let controller = Self.findSplitViewController(in: window.contentViewController) {
+        // 全窗口视图树递归遍历很贵（三栏 + 详情编辑器有上千个 NSView），而分栏对象一旦
+        // 找到就不会变。所以只在还没找到时遍历一次，之后都复用缓存——否则每次 SwiftUI
+        // 重绘（也就是每次点击选中）和每次布局都要遍历整棵树，点击就会明显延迟。
+        if self.split == nil {
+            splitController = Self.findSplitViewController(in: window.contentViewController)
+            split = Self.findSplitView(in: window.contentView)
+            if let split { installShield(for: split) }
+        }
+
+        if let controller = splitController {
             for item in controller.splitViewItems where item.canCollapse {
                 item.canCollapse = false
             }
         }
 
-        guard let split = Self.findSplitView(in: window.contentView) else { return }
-        if self.split !== split {
-            self.split = split
-            installShield(for: split)
-        }
         updateShield()
     }
 

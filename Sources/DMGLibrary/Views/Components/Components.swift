@@ -2,15 +2,30 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// App 图标：优先用从 DMG 提取出来的图标，没有就回落到光盘符号。
+///
+/// 图标解码放在后台线程（`IconStore.requestImage`），主线程只走缓存命中——这样选中
+/// 切换 / 列表滚动时不会被图标解码卡住。命中缓存时通过 init 同步取，避免首帧闪一下占位图。
 struct AppIconView: View {
     let filename: String?
     var size: CGFloat = 36
 
+    @State private var resolved: NSImage?
+
+    init(filename: String?, size: CGFloat = 36) {
+        self.filename = filename
+        self.size = size
+        // 命中缓存时同步取，避免首帧闪一下占位图。
+        _resolved = State(initialValue: IconStore.shared.image(named: filename, pointSize: size))
+    }
+
+    private var loadKey: String { "\(filename ?? "")|\(Int(size))" }
+
     var body: some View {
         Group {
-            if let image = IconStore.shared.image(named: filename) {
-                Image(nsImage: image)
+            if let resolved {
+                Image(nsImage: resolved)
                     .resizable()
+                    .interpolation(.high)
                     .aspectRatio(contentMode: .fit)
             } else {
                 Image(systemName: "opticaldisc")
@@ -22,6 +37,12 @@ struct AppIconView: View {
         }
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
+        .task(id: loadKey) {
+            // 缓存未命中时在后台解码，完成后再更新，不阻塞选中高亮的切换。
+            IconStore.shared.requestImage(named: filename, pointSize: size) { image in
+                resolved = image
+            }
+        }
     }
 }
 

@@ -2,7 +2,20 @@ import Foundation
 
 extension LibraryStore {
     /// 当前展示的条目：智能分组 → 搜索 → 高级筛选 → 排序。
+    ///
+    /// 带缓存：过滤 + 排序（比较器用 localizedCompare，比较贵）每次访问都要全量重算，
+    /// 而一次渲染会被访问三四次（isEmpty / count / ForEach），不缓存会白白算好几遍。
+    /// 仅在 items / selection / searchText / sortField / sortAscending / filters 变化时
+    /// 由 invalidateFilteredItems() 标记失效。
     var filteredItems: [DMGItem] {
+        if filteredItemsDirty {
+            filteredItemsCache = computeFilteredItems()
+            filteredItemsDirty = false
+        }
+        return filteredItemsCache ?? []
+    }
+
+    private func computeFilteredItems() -> [DMGItem] {
         var result = items
 
         switch selection {

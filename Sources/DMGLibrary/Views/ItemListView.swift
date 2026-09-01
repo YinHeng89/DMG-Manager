@@ -12,6 +12,8 @@ import SwiftUI
 /// 不参与分栏约束、不撑最小宽度，宽度不够就裁切，永远不会触发约束冲突。
 struct ItemListView: View {
     @Environment(LibraryStore.self) private var store
+    /// 列表里点的这一下，目标一定已经可见，不需要滚动定位；用这个标记跳过随后的 scrollTo。
+    @State private var suppressScroll = false
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -25,7 +27,10 @@ struct ItemListView: View {
                         )
                         .id(item.id)
                         .contentShape(Rectangle())
-                        .onTapGesture { store.selectedItemID = item.id }
+                        .onTapGesture {
+                            suppressScroll = true
+                            store.selectedItemID = item.id
+                        }
                         .contextMenu { itemContextMenu(for: item) }
                     }
                 }
@@ -34,6 +39,10 @@ struct ItemListView: View {
             // 外部（搜索、菜单栏、详情里的版本跳转）改选中项时滚动到可见区域
             .onChange(of: store.selectedItemID) { _, newID in
                 guard let newID else { return }
+                if suppressScroll {
+                    suppressScroll = false
+                    return
+                }
                 proxy.scrollTo(newID)
             }
         }

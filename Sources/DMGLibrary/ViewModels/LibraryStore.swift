@@ -49,15 +49,38 @@ final class LibraryStore {
 
     // MARK: - 视图状态
 
-    var selection: SidebarSelection = .smart(.all)
+    // 这几个都会影响 filteredItems，一改就让缓存失效。
+    // selectedItemID 不在其中：选中哪一条不改变列表内容。
+    var selection: SidebarSelection = .smart(.all) { didSet { invalidateFilteredItems() } }
     var selectedItemID: Int64?
-    var searchText = ""
+    var searchText = "" { didSet { invalidateFilteredItems() } }
     var browseMode: BrowseMode = .list
-    var sortField: SortField = .addedAt
-    var sortAscending = false
-    var filters = FilterCriteria()
+    var sortField: SortField = .addedAt { didSet { invalidateFilteredItems() } }
+    var sortAscending = false { didSet { invalidateFilteredItems() } }
+    var filters = FilterCriteria() { didSet { invalidateFilteredItems() } }
     var watchDirectories: [URL] = []
     var mountedVolumes: [Int64: URL] = [:]
+
+    // MARK: - 列表缓存
+
+    /// `filteredItems` 的缓存。过滤 + 排序每次访问都要全量重算（比较器用 localizedCompare，
+    /// 比普通字符串比较贵一个量级），而一次渲染会被访问三四次（isEmpty / count / ForEach），
+    /// 不缓存会白白重复计算。
+    ///
+    /// 放在这里而不是过滤逻辑所在的 LibraryFiltering.swift，是因为 Swift 不允许在
+    /// extension 里写存储属性。
+    var filteredItemsCache: [DMGItem]?
+    var filteredItemsDirty = true
+
+    /// 同软件其他版本的缓存（按 item.id）。`relatedVersions(for:)` 每次都对全量 items 做
+    /// O(n) 扫描 + 排序，详情面板 body 里会被访问两次，选中切换时白白算一遍。缓存后 O(1)。
+    var relatedVersionsCache: [Int64: [DMGItem]] = [:]
+
+    private func invalidateFilteredItems() {
+        filteredItemsDirty = true
+        filteredItemsCache = nil
+        relatedVersionsCache.removeAll()
+    }
 
     let database: Database
     private let repository: ItemRepository
@@ -79,6 +102,7 @@ final class LibraryStore {
 
     func reload() {
         items = (try? repository.fetchAll()) ?? []
+        invalidateFilteredItems()
         tagCounts = (try? repository.tagCounts()) ?? []
         categoryCounts = (try? repository.categoryCounts()) ?? []
         customCategories = (try? repository.customCategories()) ?? []
@@ -309,6 +333,7 @@ final class LibraryStore {
             return nil
         }
         items.append(item)
+        invalidateFilteredItems()
         return item
     }
 
@@ -441,6 +466,7 @@ final class LibraryStore {
         } else {
             items.append(item)
         }
+        invalidateFilteredItems()
     }
 
     private func reloadCounters() {
@@ -469,6 +495,7 @@ final class LibraryStore {
             }
         }
         items.removeAll { ids.contains($0.id) }
+        invalidateFilteredItems()
         if let selectedItemID, ids.contains(selectedItemID) { self.selectedItemID = nil }
         reloadCounters()
     }
@@ -674,14 +701,17 @@ final class LibraryStore {
 
     // MARK: - 版本库
 
-    /// 同一个软件的其他版本（按 Bundle ID / 名称聚合）。
+    /// 同一个软件的其他版本（按 Bundle ID / 名称聚合）。结果按 item.id 缓存，避免每次选中切换都全量扫描。
     func relatedVersions(for item: DMGItem) -> [DMGItem] {
+        if let cached = relatedVersionsCache[item.id] { return cached }
         let key = item.groupingKey
-        return items
+        let result = items
             .filter { $0.groupingKey == key && $0.id != item.id }
             .sorted { lhs, rhs in
                 VersionComparator.compare(lhs.version ?? "", rhs.version ?? "") == .orderedDescending
             }
+        relatedVersionsCache[item.id] = result
+        return result
     }
 
     /// 重复文件分组（按 SHA-256）。
