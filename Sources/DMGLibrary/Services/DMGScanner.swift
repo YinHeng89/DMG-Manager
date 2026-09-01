@@ -63,10 +63,36 @@ enum SmartCategorizer {
     static func category(for text: String) -> String {
         let lowercased = text.lowercased()
         for rule in rules {
-            if rule.keywords.contains(where: { lowercased.contains($0) }) {
+            if rule.keywords.contains(where: { matches(keyword: $0, in: lowercased) }) {
                 return rule.category
             }
         }
         return CategoryPresets.uncategorized
     }
+
+    /// Latin 关键词要求作为「独立词」出现（前后被非字母数字字符或字符串边界隔开），
+    /// 避免 "code" 误命中 "decode"、"git" 误命中 "digital" 这类过泛分类；
+    /// 中文等 CJK 关键词保持子串匹配（CJK 无词边界概念）。
+    private static func matches(keyword: String, in text: String) -> Bool {
+        let isLatin = keyword.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) }
+        guard isLatin else { return text.contains(keyword) }
+
+        var searchStart = text.startIndex
+        while let range = text.range(of: keyword, range: searchStart..<text.endIndex) {
+            let before = range.lowerBound == text.startIndex
+                ? true
+                : !text[text.index(before: range.lowerBound)].isWordChar
+            let after = range.upperBound == text.endIndex
+                ? true
+                : !text[range.upperBound].isWordChar
+            if before && after { return true }
+            searchStart = range.upperBound
+        }
+        return false
+    }
+}
+
+private extension Character {
+    /// 构成「词」的字符：ASCII 字母或数字。用于分类关键词的边界判定。
+    var isWordChar: Bool { isASCII && (isLetter || isNumber) }
 }

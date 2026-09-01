@@ -190,7 +190,7 @@ struct CategoryChip: View {
                 .buttonStyle(.plain)
                 .disabled(!canDelete)
                 .opacity(canDelete ? (hovered ? 1 : 0.5) : 0.25)
-                .help(canDelete ? "删除分类「\(name)」" : (blockedReason ?? ""))
+                .help(canDelete ? Preferences.shared.t("category.deleteHelp", name) : (blockedReason ?? ""))
             }
         }
         .font(.caption)

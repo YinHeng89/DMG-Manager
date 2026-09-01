@@ -89,21 +89,7 @@ struct ContentView: View {
                 store.selectedItemID = id
             }
         }
-        .task {
-            await store.refreshFileStatus()
-            await store.refreshInstallStatus()
-            // 后台扫库：不 await，启动首屏就绪后再异步扫描监控目录，不拖慢启动。
-            // 真正的新增由 importFiles 按路径比对数据库去重，不会重复入库。
-            Task { await store.scanWatchDirectoriesOnLaunch() }
-            // 运行期感知外部文件增删：周期性采样存在性，让「文件失联」标签实时跟磁盘同步。
-            // 否则外部恢复文件后界面不会重绘，标签卡在失联态。
-            // 轮询直接跑在 .task 结构化上下文里（不另起非结构化 Task）：窗口关闭时
-            // .task 被取消，循环随 Task.isCancelled 退出，不会在后台空转、多开窗口也不叠加。
-            while !Task.isCancelled {
-                store.refreshPresence()
-                try? await Task.sleep(for: .seconds(2))
-            }
-        }
+
     }
 
     // MARK: - 文件选择（NSOpenPanel 比 SwiftUI fileImporter 稳定）

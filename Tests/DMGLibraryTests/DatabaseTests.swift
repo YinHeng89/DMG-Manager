@@ -134,10 +134,19 @@ final class DatabaseTests: XCTestCase {
     }
 
     func testSmartCategorizer() {
-        XCTAssertEqual(SmartCategorizer.category(for: "googlechrome.dmg"), "浏览器")
+        // 分隔符切分后的整词匹配：连字符分隔的名称能正确归类。
+        XCTAssertEqual(SmartCategorizer.category(for: "google-chrome.dmg"), "浏览器")
         XCTAssertEqual(SmartCategorizer.category(for: "cursor-universal.dmg"), "开发工具")
         XCTAssertEqual(SmartCategorizer.category(for: "iina-1.3.5.dmg"), "多媒体")
         XCTAssertEqual(SmartCategorizer.category(for: "something-unknown.dmg"), "未分类")
+    }
+
+    func testSmartCategorizerAvoidsFalsePositives() {
+        // P2-13：子串误命中应当被排除（keyword 必须作为独立词出现）。
+        XCTAssertEqual(SmartCategorizer.category(for: "decoder.dmg"), "未分类")            // 不应被 "code" 命中
+        XCTAssertEqual(SmartCategorizer.category(for: "digital.dmg"), "未分类")             // 不应被 "git" 命中
+        XCTAssertEqual(SmartCategorizer.category(for: "arcade.dmg"), "未分类")              // 不应被 "arc" 命中
+        XCTAssertEqual(SmartCategorizer.category(for: "logitech-options.dmg"), "未分类")    // 不应被 "git" 命中
     }
 
     func testSHA256() throws {

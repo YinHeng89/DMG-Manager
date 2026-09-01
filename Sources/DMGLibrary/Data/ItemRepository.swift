@@ -67,6 +67,22 @@ final class ItemRepository {
         try setTags(itemID: item.id, tags: item.tags)
     }
 
+    /// 只更新后台解析得到的安装状态，不触碰用户元数据，避免覆盖并发的用户编辑。
+    func updateInstallStatus(id: Int64, version: String?, path: String?) throws {
+        try database.run(
+            "UPDATE dmg_items SET installed_version = ?, installed_path = ? WHERE id = ?;",
+            bindings: [.value(version), .value(path), .value(id)]
+        )
+    }
+
+    /// 只更新后台补算的 SHA-256，不触碰其它列，避免覆盖并发的用户编辑。
+    func updateSHA256(id: Int64, hash: String) throws {
+        try database.run(
+            "UPDATE dmg_items SET sha256 = ? WHERE id = ?;",
+            bindings: [.value(hash), .value(id)]
+        )
+    }
+
     private static var placeholders: String {
         Array(repeating: "?", count: writableColumns.count).joined(separator: ", ")
     }

@@ -28,30 +28,15 @@ struct ItemListView: View {
         let selectedKey = store.selectedGroupKey
         let selectedID = store.selectedItemID
 
+        let items = store.displayedItems
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 5) {
-                    ForEach(Array(store.displayedItems.enumerated()), id: \.element.id) { index, item in
-                        ItemRow(
-                            item: item,
-                            isSelected: highlightByGroup
-                                ? (item.groupingKey == selectedKey)
-                                : (item.id == selectedID),
-                            isAlternate: index % 2 == 1,
-                            versionCount: store.versionCount(for: item)
-                        )
-                        .id(item.id)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            suppressScroll = true
-                            // 折叠开启时：点一行等于选中「这个软件」——切到它的代表项（最新版本）；
-                            // 关闭时（重复文件 / 失联）：每一行是独立文件，按精确 id 选中，
-                            // 避免点一份重复文件把同组全部点亮。
-                            store.selectedItemID = highlightByGroup
-                                ? store.representativeID(for: item.id)
-                                : item.id
-                        }
-                        .contextMenu { itemContextMenu(for: item) }
+                    ForEach(0..<items.count, id: \.self) { index in
+                        makeRow(items[index], index: index,
+                                highlightByGroup: highlightByGroup,
+                                selectedKey: selectedKey,
+                                selectedID: selectedID)
                     }
                 }
                 .padding(.vertical, 4)
@@ -71,22 +56,46 @@ struct ItemListView: View {
             if !ids.isEmpty { pendingDeleteIDs = ids }
         }
         .confirmationDialog(
-            pendingDeleteIDs.map { "确认从资料库移除选中的 \($0.count) 项？此操作不可撤销" }
-                ?? "确认移除？",
+            pendingDeleteIDs.map { Preferences.shared.t("remove.confirmTitle", $0.count) }
+                ?? Preferences.shared.t("remove.confirmTitleFallback"),
             isPresented: Binding(
                 get: { pendingDeleteIDs != nil },
                 set: { if !$0 { pendingDeleteIDs = nil } }
             ),
             titleVisibility: .visible
         ) {
-            Button("移除", role: .destructive) {
+            Button(Preferences.shared.t("remove.button"), role: .destructive) {
                 if let ids = pendingDeleteIDs {
                     store.delete(ids: ids, moveToTrash: false)
                 }
                 pendingDeleteIDs = nil
             }
-            Button("取消", role: .cancel) { pendingDeleteIDs = nil }
+            Button(Preferences.shared.t("remove.cancel"), role: .cancel) { pendingDeleteIDs = nil }
         }
+    }
+
+    /// 抽取成独立方法，避免 ForEach 内联闭包过于复杂触发 Swift 类型检查器超时。
+    private func makeRow(_ item: DMGItem, index: Int, highlightByGroup: Bool, selectedKey: String?, selectedID: Int64?) -> some View {
+        ItemRow(
+            item: item,
+            isSelected: highlightByGroup
+                ? (item.groupingKey == selectedKey)
+                : (item.id == selectedID),
+            isAlternate: index % 2 == 1,
+            versionCount: store.versionCount(for: item)
+        )
+        .id(item.id)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            suppressScroll = true
+            // 折叠开启时：点一行等于选中「这个软件」——切到它的代表项（最新版本）；
+            // 关闭时（重复文件 / 失联）：每一行是独立文件，按精确 id 选中，
+            // 避免点一份重复文件把同组全部点亮。
+            store.selectedItemID = highlightByGroup
+                ? store.representativeID(for: item.id)
+                : item.id
+        }
+        .contextMenu { itemContextMenu(for: item) }
     }
 
     @ViewBuilder
@@ -94,21 +103,21 @@ struct ItemListView: View {
         Button {
             store.open(item)
         } label: {
-            Label("打开 DMG", systemImage: "arrow.up.forward.square")
+            Label(Preferences.shared.t("ctx.openDmg"), systemImage: "arrow.up.forward.square")
         }
         .disabled(!item.exists)
 
         Button {
             store.revealInFinder(item)
         } label: {
-            Label("在 Finder 中显示", systemImage: "folder")
+            Label(Preferences.shared.t("ctx.showInFinder"), systemImage: "folder")
         }
         .disabled(!item.exists)
 
         Button {
             store.copyPath(item)
         } label: {
-            Label("复制路径", systemImage: "doc.on.doc")
+            Label(Preferences.shared.t("action.copyPath"), systemImage: "doc.on.doc")
         }
 
         Divider()
@@ -116,20 +125,21 @@ struct ItemListView: View {
         Button {
             store.toggleFavorite(id: item.id)
         } label: {
-            Label(item.favorite ? "取消收藏" : "收藏", systemImage: item.favorite ? "star.slash" : "star")
+            Label(item.favorite ? Preferences.shared.t("detail.fav.on") : Preferences.shared.t("detail.fav.off"),
+                  systemImage: item.favorite ? "star.slash" : "star")
         }
 
         Button {
             Task { await store.mount(item) }
         } label: {
-            Label("挂载 DMG", systemImage: "externaldrive.badge.plus")
+            Label(Preferences.shared.t("ctx.mountDmg"), systemImage: "externaldrive.badge.plus")
         }
         .disabled(!item.exists || store.mountedVolumes[item.id] != nil)
 
         Button {
             Task { await store.reparse(ids: [item.id]) }
         } label: {
-            Label("重新解析", systemImage: "arrow.triangle.2.circlepath")
+            Label(Preferences.shared.t("footer.reparse"), systemImage: "arrow.triangle.2.circlepath")
         }
 
         Divider()
@@ -137,7 +147,7 @@ struct ItemListView: View {
         Button(role: .destructive) {
             pendingDeleteIDs = [item.id]
         } label: {
-            Label("从资料库移除", systemImage: "trash")
+            Label(Preferences.shared.t("remove.fromLibrary.title"), systemImage: "trash")
         }
     }
 }
@@ -169,7 +179,7 @@ struct ItemRow: View {
                             .foregroundStyle(.yellow)
                     }
                     if versionCount > 1 {
-                        Text("共 \(versionCount) 个版本")
+                        Text(Preferences.shared.t("version.count", versionCount))
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 6)
@@ -244,9 +254,9 @@ struct ItemGridView: View {
                         versionCount: store.versionCount(for: item)
                     )
                     .contextMenu {
-                        Button("打开 DMG") { store.open(item) }
-                        Button("在 Finder 中显示") { store.revealInFinder(item) }
-                        Button(item.favorite ? "取消收藏" : "收藏") { store.toggleFavorite(id: item.id) }
+                        Button(Preferences.shared.t("ctx.openDmg")) { store.open(item) }
+                        Button(Preferences.shared.t("ctx.showInFinder")) { store.revealInFinder(item) }
+                        Button(item.favorite ? Preferences.shared.t("detail.fav.on") : Preferences.shared.t("detail.fav.off")) { store.toggleFavorite(id: item.id) }
                     }
                 }
             }

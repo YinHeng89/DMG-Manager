@@ -339,30 +339,40 @@ final class LibraryStore {
     }
 
     /// 只把文件信息写入库，状态为 pending，不触发挂载解析。
+    ///
+    /// 文件属性读取与 DB 读写都挪到后台线程。连接以 `SQLITE_OPEN_FULLMUTEX`
+    /// 打开（单连接串行化，跨线程安全），否则导入几百个 DMG 时主线程会被同步
+    /// `insert` 占满、界面卡死。写库后再回到主线程更新 `items` 与派生缓存。
     private func addPlaceholder(_ url: URL) async -> DMGItem? {
-        if (try? repository.itemID(forPath: url.path)) != nil {
-            return nil // 已经导入过
-        }
+        let repository = self.repository
+        let created = await Task.detached(priority: .userInitiated) { () -> DMGItem? in
+            if (try? repository.itemID(forPath: url.path)) != nil {
+                return nil // 已经导入过
+            }
 
-        let facts = FileFactsReader.read(url: url)
-        var item = DMGItem(
-            path: url.path,
-            filename: url.lastPathComponent,
-            displayName: url.lastPathComponent.guessedAppName,
-            category: SmartCategorizer.category(for: url.lastPathComponent),
-            fileSize: facts.size,
-            fileCreatedAt: facts.createdAt,
-            fileModifiedAt: facts.modifiedAt,
-            parseStatus: .pending,
-            createdAt: Date(),
-            updatedAt: Date()
-        )
+            let facts = FileFactsReader.read(url: url)
+            var item = DMGItem(
+                path: url.path,
+                filename: url.lastPathComponent,
+                displayName: url.lastPathComponent.guessedAppName,
+                category: SmartCategorizer.category(for: url.lastPathComponent),
+                fileSize: facts.size,
+                fileCreatedAt: facts.createdAt,
+                fileModifiedAt: facts.modifiedAt,
+                parseStatus: .pending,
+                createdAt: Date(),
+                updatedAt: Date()
+            )
 
-        do {
-            try repository.insert(&item)
-        } catch {
-            return nil
-        }
+            do {
+                try repository.insert(&item)
+            } catch {
+                return nil
+            }
+            return item
+        }.value
+
+        guard let item = created else { return nil }
         items.append(item)
         invalidateDerivedState()
         return item
@@ -647,7 +657,7 @@ final class LibraryStore {
             var updated = item
             await resolveInstallStatus(for: &updated)
             if updated.installedVersion != item.installedVersion || updated.installedPath != item.installedPath {
-                try? repository.update(updated)
+                try? repository.updateInstallStatus(id: updated.id, version: updated.installedVersion, path: updated.installedPath)
                 updatedItems.append(updated)
             }
         }
@@ -677,7 +687,7 @@ final class LibraryStore {
 
             var updated = target
             updated.sha256 = hash
-            try? repository.update(updated)
+            try? repository.updateSHA256(id: target.id, hash: hash)
             upsert(updated)
         }
     }

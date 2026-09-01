@@ -354,5 +354,17 @@ extension Preferences {
         "appearance.dark": [.chinese: "深色", .english: "Dark"],
         "settings.language": [.chinese: "语言", .english: "Language"],
         "settings.appearance": [.chinese: "外观", .english: "Appearance"],
+
+        // MARK: 上下文菜单 / 右键（ItemListView.swift）
+
+        "ctx.openDmg": [.chinese: "打开 DMG", .english: "Open DMG"],
+        "ctx.showInFinder": [.chinese: "在 Finder 中显示", .english: "Show in Finder"],
+        "ctx.mountDmg": [.chinese: "挂载 DMG", .english: "Mount DMG"],
+        "remove.button": [.chinese: "移除", .english: "Remove"],
+        "remove.confirmTitle": [.chinese: "确认从资料库移除选中的 %d 项？此操作不可撤销",
+                                 .english: "Remove %d selected item(s) from the library? This cannot be undone."],
+        "remove.confirmTitleFallback": [.chinese: "确认移除？", .english: "Confirm removal?"],
+        "version.count": [.chinese: "共 %d 个版本", .english: "%d versions"],
+        "category.deleteHelp": [.chinese: "删除分类「%@」", .english: "Delete category “%@”"],
     ]
 }

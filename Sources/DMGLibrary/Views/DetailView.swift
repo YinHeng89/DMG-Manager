@@ -264,7 +264,7 @@ private struct DetailEditor: View {
 
     private func parseErrorBanner(_ message: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Label("解析失败", systemImage: "exclamationmark.triangle.fill")
+            Label(Preferences.shared.t("parse.failed"), systemImage: "exclamationmark.triangle.fill")
                 .foregroundStyle(.red)
                 .font(.callout.weight(.medium))
             Text(message)
