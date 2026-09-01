@@ -25,7 +25,7 @@ struct ItemListView: View {
 
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 0) {
+                LazyVStack(spacing: 5) {
                     ForEach(Array(store.displayedItems.enumerated()), id: \.element.id) { index, item in
                         ItemRow(
                             item: item,

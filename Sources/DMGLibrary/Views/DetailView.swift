@@ -643,14 +643,6 @@ struct VersionRow: View {
                     .padding(.vertical, 2)
                     .background(Color.green.opacity(0.12), in: Capsule())
             }
-            if isCurrent {
-                Text("当前")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(.quaternary.opacity(0.6), in: Capsule())
-            }
             Spacer()
             Text(item.filename)
                 .font(.caption)
