@@ -47,6 +47,9 @@ final class LibraryStore {
     var importStatusMessage = ""
     var errorMessage: String?
 
+    /// 上次启动后自动扫库的结果，供 UI 提示。扫完会自动清空。
+    var lastScanResult: ScanOutcome?
+
     // MARK: - 视图状态
 
     // 这几个都会影响 filteredItems，一改就让缓存失效。
@@ -442,6 +445,28 @@ final class LibraryStore {
             truncated = truncated || outcome.truncated
         }
         return ScanOutcome(scanned: scanned, added: added, truncated: truncated)
+    }
+
+    /// 启动后自动扫库：在后台进行，不阻塞首屏。
+    ///
+    /// - 没有监控目录时直接返回，避免无谓扫描。
+    /// - 已有文件按路径与数据库比对（`addPlaceholder` 会查 `itemID(forPath:)`，
+    ///   已入库的直接跳过），**仅新增真正的新 DMG**，不会重复导入。
+    /// - 扫完把结果写入 `lastScanResult`，由 UI 弹出提示，几秒后自动清空。
+    private var hasScannedOnLaunch = false
+    func scanWatchDirectoriesOnLaunch() async {
+        guard !hasScannedOnLaunch else { return }
+        hasScannedOnLaunch = true
+        guard !watchDirectories.isEmpty else { return }
+
+        let outcome = await scanAllWatchDirectories()
+        guard outcome.scanned > 0 else { return }
+
+        lastScanResult = outcome
+        Task {
+            try? await Task.sleep(for: .seconds(6))
+            lastScanResult = nil
+        }
     }
 
     // MARK: - 更新

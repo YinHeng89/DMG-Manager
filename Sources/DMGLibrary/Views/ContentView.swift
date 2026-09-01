@@ -91,6 +91,9 @@ struct ContentView: View {
         .task {
             await store.refreshFileStatus()
             await store.refreshInstallStatus()
+            // 后台扫库：不 await，启动首屏就绪后再异步扫描监控目录，不拖慢启动。
+            // 真正的新增由 importFiles 按路径比对数据库去重，不会重复入库。
+            Task { await store.scanWatchDirectoriesOnLaunch() }
         }
     }
 
@@ -263,6 +266,11 @@ struct BrowserPane: View {
                 Divider()
             }
 
+            if let scan = store.lastScanResult, scan.scanned > 0 {
+                ScanResultBanner(result: scan)
+                Divider()
+            }
+
             if store.displayedItems.isEmpty {
                 EmptyStateView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -365,6 +373,43 @@ struct ImportProgressBanner: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(.bar)
+    }
+}
+
+/// 启动后自动扫库的结果提示：扫到多少、新增多少，6 秒后由 store 自动清空。
+struct ScanResultBanner: View {
+    @Environment(LibraryStore.self) private var store
+    let result: LibraryStore.ScanOutcome
+
+    private var message: String {
+        if result.added > 0 {
+            return "启动扫描完成 · 新增 \(result.added) 个 DMG（共扫描 \(result.scanned) 个文件）"
+        }
+        return "启动扫描完成 · 资料库已是最新（扫描 \(result.scanned) 个文件）"
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: result.added > 0 ? "checkmark.circle.fill" : "magnifyingglass")
+                .font(.callout)
+                .foregroundStyle(result.added > 0 ? .green : .secondary)
+            Text(message)
+                .font(.callout)
+                .lineLimit(1)
+            Spacer()
+            Button {
+                store.lastScanResult = nil
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.borderless)
+            .help("关闭")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
