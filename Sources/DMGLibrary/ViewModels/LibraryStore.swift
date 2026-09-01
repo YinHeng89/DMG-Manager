@@ -748,6 +748,10 @@ final class LibraryStore {
         }
         try FileManager.default.copyItem(at: appURL, to: destination)
 
+        // 刚装好的 App 还没进 InstalledAppService 的缓存：先强制重新扫描，
+        // 否则 resolve 扫不到 → installedVersion 仍是 nil → 安装状态徽章不刷新。
+        InstalledAppService.shared.rebuild()
+
         var updated = item
         await resolveInstallStatus(for: &updated)
         save(updated)

@@ -21,7 +21,9 @@ struct ItemListView: View {
     var body: some View {
         // 用 let 接住再进闭包：在 ForEach 里直接访问这个属性会每行求值一次，
         // 而它内部要在 items 里线性查找，整段就退化成 O(n²)。
+        let highlightByGroup = store.shouldCollapseVersions
         let selectedKey = store.selectedGroupKey
+        let selectedID = store.selectedItemID
 
         ScrollViewReader { proxy in
             ScrollView {
@@ -29,7 +31,9 @@ struct ItemListView: View {
                     ForEach(Array(store.displayedItems.enumerated()), id: \.element.id) { index, item in
                         ItemRow(
                             item: item,
-                            isSelected: item.groupingKey == selectedKey,
+                            isSelected: highlightByGroup
+                                ? (item.groupingKey == selectedKey)
+                                : (item.id == selectedID),
                             isAlternate: index % 2 == 1,
                             versionCount: store.versionCount(for: item)
                         )
@@ -37,9 +41,12 @@ struct ItemListView: View {
                         .contentShape(Rectangle())
                         .onTapGesture {
                             suppressScroll = true
-                            // 点一行等于选中「这个软件」：切到它的代表项（最新版本）。
-                            // 之前选中过旧版本的话，点回来应该回到最新，而不是留在旧版本上。
-                            store.selectedItemID = store.representativeID(for: item.id)
+                            // 折叠开启时：点一行等于选中「这个软件」——切到它的代表项（最新版本）；
+                            // 关闭时（重复文件 / 失联）：每一行是独立文件，按精确 id 选中，
+                            // 避免点一份重复文件把同组全部点亮。
+                            store.selectedItemID = highlightByGroup
+                                ? store.representativeID(for: item.id)
+                                : item.id
                         }
                         .contextMenu { itemContextMenu(for: item) }
                     }
@@ -202,14 +209,18 @@ struct ItemGridView: View {
 
     var body: some View {
         // 同 ItemListView：先用 let 接住，避免在 ForEach 里每行重复求值
+        let highlightByGroup = store.shouldCollapseVersions
         let selectedKey = store.selectedGroupKey
+        let selectedID = store.selectedItemID
 
         ScrollView {
             LazyVGrid(columns: columns, spacing: 18) {
                 ForEach(store.displayedItems) { item in
                     GridCard(
                         item: item,
-                        isSelected: item.groupingKey == selectedKey,
+                        isSelected: highlightByGroup
+                            ? (item.groupingKey == selectedKey)
+                            : (item.id == selectedID),
                         versionCount: store.versionCount(for: item)
                     )
                     .contextMenu {
@@ -279,7 +290,11 @@ struct GridCard: View {
                 )
         )
         .onHover { isHovered = $0 }
-        .onTapGesture { store.selectedItemID = store.representativeID(for: item.id) }
+        .onTapGesture {
+            store.selectedItemID = store.shouldCollapseVersions
+                ? store.representativeID(for: item.id)
+                : item.id
+        }
     }
 
     private var selectionFill: Color {

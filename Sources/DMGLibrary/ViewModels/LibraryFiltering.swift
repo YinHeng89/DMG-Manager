@@ -59,7 +59,10 @@ extension LibraryStore {
     ///
     /// 「重复文件」和「文件失联」这两个列表存在的意义，恰恰是把每一份都摆出来——
     /// 折叠了就自相矛盾：内容相同的两份会合成一行，用户根本没法挑出要删的那份。
-    private var shouldCollapseVersions: Bool {
+    ///
+    /// 列表高亮也据此切换：折叠开启时按「组」高亮（代表项始终亮），
+    /// 关闭时（重复文件 / 失联）按「精确 id」高亮，避免点一份重复文件把同组全点亮。
+    var shouldCollapseVersions: Bool {
         switch selection {
         case .smart(.duplicates), .smart(.missing): return false
         default: return true

@@ -24,8 +24,9 @@
 
   function applyTheme(theme) {
     root.setAttribute("data-theme", theme);
+    // 月亮 / 太阳图标由 CSS 按 data-theme 自动切换，这里只更新无障碍标签，
+    // 不要改写按钮内容（否则会把内联 SVG 清掉）。
     if (toggle) {
-      toggle.textContent = theme === "dark" ? "☀️" : "🌙";
       toggle.setAttribute("aria-label", theme === "dark" ? "切换到浅色" : "切换到深色");
     }
   }
