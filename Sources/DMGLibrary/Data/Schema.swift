@@ -2,7 +2,7 @@ import Foundation
 
 /// 数据库结构定义与迁移。
 enum Schema {
-    static let currentVersion = 1
+    static let currentVersion = 2
 
     static func migrate(database: Database) throws {
         try database.execute("""
@@ -55,6 +55,16 @@ enum Schema {
             dmg_id  INTEGER NOT NULL REFERENCES dmg_items(id) ON DELETE CASCADE,
             tag_id  INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
             PRIMARY KEY (dmg_id, tag_id)
+        );
+        """)
+
+        // 用户自建的分类词表。和 tags 一样独立成表，
+        // 这样「新建了但还没分配给任何条目」的分类也能保留下来（reload 不会把它冲掉），
+        // 未使用的自建分类才可以被删除。
+        try database.execute("""
+        CREATE TABLE IF NOT EXISTS categories (
+            id      INTEGER PRIMARY KEY AUTOINCREMENT,
+            name    TEXT NOT NULL UNIQUE
         );
         """)
 

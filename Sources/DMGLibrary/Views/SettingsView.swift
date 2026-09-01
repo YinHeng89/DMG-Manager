@@ -1,27 +1,34 @@
 import SwiftUI
 
+/// 设置窗口。
+///
+/// 这里刻意**不持有 store、也不读任何数据**：四个页面各自是独立的 `View`。
+/// SwiftUI 的 `@Observable` 是按 View 粒度追踪依赖的，如果把它们写成 `SettingsView`
+/// 的计算属性，任何一页读到的数据一变（`body` 求值就会订阅），整个 `SettingsView`
+/// 连同标签栏都会被重绘；解析时 `items` 每解析完一个条目就变一次，标签栏图标就会一直抖。
+/// 拆成独立 View 后，只有真正数据变了的那一个页面会重绘，标签栏始终不动。
 struct SettingsView: View {
-    @Environment(LibraryStore.self) private var store
-    @State private var showBackupDone = false
-    @State private var showFolderPicker = false
-
     var body: some View {
         TabView {
-            generalTab
+            GeneralSettingsTab()
                 .tabItem { Label("通用", systemImage: "gearshape") }
-            libraryTab
+            LibrarySettingsTab()
                 .tabItem { Label("资料库", systemImage: "externaldrive") }
-            dataTab
+            DataSettingsTab()
                 .tabItem { Label("数据", systemImage: "internaldrive") }
-            aboutTab
+            AboutSettingsTab()
                 .tabItem { Label("关于", systemImage: "info.circle") }
         }
-        .frame(width: 520, height: 420)
+        .frame(width: 520, height: 460)
     }
+}
 
-    // MARK: - 通用
+// MARK: - 通用
 
-    private var generalTab: some View {
+private struct GeneralSettingsTab: View {
+    @Environment(LibraryStore.self) private var store
+
+    var body: some View {
         Form {
             Picker("默认视图", selection: Binding(
                 get: { store.browseMode },
@@ -48,143 +55,184 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .padding()
     }
+}
 
-    // MARK: - 资料库
+// MARK: - 资料库
 
-    private var libraryTab: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("监控目录")
-                    .font(.headline)
-                Spacer()
+/// 只负责「扫描目录」的增删与状态展示，**不做扫描、不做解析**。
+///
+/// 这里刻意不读 `store.isImporting`，也不放扫描按钮 / 进度条 / 结果文案：
+/// 解析过程中这些状态会高频变化，只要订阅了就会把整个页面拖进反复重绘。
+/// 扫描与解析统一由主窗口的「操作」菜单负责，进度也在主窗口显示。
+private struct LibrarySettingsTab: View {
+    @Environment(LibraryStore.self) private var store
+
+    @State private var showFolderPicker = false
+
+    /// 目录的展示信息。
+    ///
+    /// 缓存而不是在 body 里现算：统计条目数要逐条比对路径（O(n)），
+    /// 判断目录是否存在还要访问磁盘，放在 body 里会被反复执行。
+    private struct DirectoryInfo: Identifiable {
+        let url: URL
+        let count: Int
+        let exists: Bool
+
+        var id: String { url.path }
+    }
+
+    @State private var directoryInfo: [DirectoryInfo] = []
+
+    var body: some View {
+        Form {
+            Section {
+                if directoryInfo.isEmpty {
+                    Text("还没有添加目录")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(directoryInfo) { info in
+                        directoryRow(info)
+                    }
+                }
+
                 Button {
                     showFolderPicker = true
                 } label: {
-                    Image(systemName: "plus")
+                    Label("添加目录…", systemImage: "plus")
                 }
-                .help("添加目录，用于扫描与自动重新定位")
+            } header: {
+                // 叫「扫描目录」而不是「监控目录」：这里没有后台文件监听，
+                // 目录只用于扫描导入和失联文件找回。
+                Text("扫描目录")
+            } footer: {
+                Text("目录用于扫描导入 DMG，以及文件失联时找回原文件。移除目录只是不再扫描它，已入库的条目会保留。导入与解析请在主窗口的「操作」菜单里进行。")
             }
-
-            if store.watchDirectories.isEmpty {
-                Text("还没有监控目录。文件失联时，软件会在这些目录里帮你找回来。")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
-            } else {
-                List {
-                    ForEach(store.watchDirectories, id: \.path) { directory in
-                        HStack {
-                            Image(systemName: "folder")
-                                .foregroundStyle(.secondary)
-                            Text(directory.path)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                            Spacer()
-                            Button {
-                                store.watchDirectories.removeAll { $0.path == directory.path }
-                                store.saveSettings()
-                            } label: {
-                                Image(systemName: "minus.circle")
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-                .listStyle(.bordered)
-            }
-
-            Button("立即扫描所有监控目录") {
-                Task {
-                    for directory in store.watchDirectories {
-                        _ = await store.scanFolder(directory)
-                    }
-                }
-            }
-            .disabled(store.watchDirectories.isEmpty)
-
-            Spacer()
         }
+        .formStyle(.grouped)
         .padding()
         .fileImporter(isPresented: $showFolderPicker, allowedContentTypes: [.folder]) { (result: Result<URL, Error>) in
             if case .success(let url) = result {
-                if !store.watchDirectories.contains(url) {
-                    store.watchDirectories.append(url)
-                    store.saveSettings()
+                store.addWatchDirectory(url) // 内部按解析后的真实路径去重
+                Task {
+                    // 后台导入，进度由主窗口显示；本页不持有任何扫描状态。
+                    await store.scanFolder(url)
+                    refreshDirectoryInfo()
                 }
-                Task { _ = await store.scanFolder(url) }
             }
         }
+        .task { refreshDirectoryInfo() }
+        .onChange(of: store.watchDirectories) { _, _ in refreshDirectoryInfo() }
     }
 
-    // MARK: - 数据
+    private func directoryRow(_ info: DirectoryInfo) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: info.exists ? "folder" : "exclamationmark.triangle.fill")
+                .foregroundStyle(info.exists ? Color.secondary : Color.orange)
+                .help(info.exists ? "" : "目录已不存在，可能已被删除或移动")
 
-    private var dataTab: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            GroupBox {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("数据位置")
-                        .font(.headline)
-                    Text(AppPaths.root.path)
-                        .font(.system(.caption, design: .monospaced))
-                        .textSelection(.enabled)
-                    HStack {
-                        Button("在 Finder 中显示") {
-                            NSWorkspace.shared.activateFileViewerSelecting([AppPaths.database])
-                        }
-                        Button("打开图标缓存") {
-                            NSWorkspace.shared.open(AppPaths.thumbnails)
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            GroupBox {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("备份")
-                        .font(.headline)
-                    Text("启动时自动快照，最多保留 \(BackupService.keepCount) 份。数据库使用 WAL 模式，崩溃也不会丢备注。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    HStack {
-                        Button("立即备份") {
-                            BackupService.snapshot(database: AppPaths.database)
-                            showBackupDone = true
-                        }
-                        if showBackupDone {
-                            Label("已备份", systemImage: "checkmark.circle.fill")
-                                .font(.caption)
-                                .foregroundStyle(.green)
-                        }
-                        Button("打开备份目录") {
-                            NSWorkspace.shared.open(AppPaths.backups)
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            GroupBox {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("统计")
-                        .font(.headline)
-                    Text("\(store.items.count) 个安装包 · \(store.tagCounts.count) 个标签 · \(store.categoryCounts.count) 个分类")
-                        .font(.callout)
-                    Text("总大小 \(ByteFormatter.string(fromBytes: store.items.reduce(0) { $0 + $1.fileSize }))")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
+            Text(info.url.path)
+                .lineLimit(1)
+                .truncationMode(.middle)
 
             Spacer()
+
+            Text("\(info.count) 项")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+
+            Button {
+                store.removeWatchDirectory(info.url)
+            } label: {
+                Image(systemName: "minus.circle")
+            }
+            .buttonStyle(.plain)
+            .help("移除目录（不会删除已入库的条目）")
         }
-        .padding()
     }
 
-    // MARK: - 关于
+    private func refreshDirectoryInfo() {
+        directoryInfo = store.watchDirectories.map {
+            DirectoryInfo(url: $0, count: store.itemCount(in: $0), exists: store.directoryExists($0))
+        }
+    }
+}
 
-    private var aboutTab: some View {
+// MARK: - 数据
+
+private struct DataSettingsTab: View {
+    @Environment(LibraryStore.self) private var store
+    @State private var showBackupDone = false
+
+    var body: some View {
+        Form {
+            Section {
+                Text(AppPaths.root.path)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+
+                HStack {
+                    Button("在 Finder 中显示") {
+                        NSWorkspace.shared.activateFileViewerSelecting([AppPaths.database])
+                    }
+                    Button("打开图标缓存") {
+                        NSWorkspace.shared.open(AppPaths.thumbnails)
+                    }
+                }
+            } header: {
+                Text("数据位置")
+            }
+
+            Section {
+                HStack {
+                    Button("立即备份") {
+                        BackupService.snapshot(database: AppPaths.database)
+                        showBackupDone = true
+                    }
+                    if showBackupDone {
+                        Label("已备份", systemImage: "checkmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                    }
+                    Button("打开备份目录") {
+                        NSWorkspace.shared.open(AppPaths.backups)
+                    }
+                }
+            } header: {
+                Text("备份")
+            } footer: {
+                Text("启动时自动快照，最多保留 \(BackupService.keepCount) 份。数据库使用 WAL 模式，崩溃也不会丢备注。")
+            }
+
+            // LabeledContent 让数值右对齐：解析时数字变化只影响左边缘，不会顶高整行。
+            Section("统计") {
+                LabeledContent("安装包") {
+                    Text("\(store.items.count)")
+                        .monospacedDigit()
+                }
+                LabeledContent("标签") {
+                    Text("\(store.tagCounts.count)")
+                        .monospacedDigit()
+                }
+                LabeledContent("分类") {
+                    Text("\(store.categoryCounts.count)")
+                        .monospacedDigit()
+                }
+                LabeledContent("总大小") {
+                    Text(ByteFormatter.string(fromBytes: store.items.reduce(0) { $0 + $1.fileSize }))
+                        .monospacedDigit()
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+}
+
+// MARK: - 关于
+
+private struct AboutSettingsTab: View {
+    var body: some View {
         VStack(spacing: 16) {
             Image(systemName: "opticaldisc")
                 .font(.system(size: 48))

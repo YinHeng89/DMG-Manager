@@ -81,13 +81,13 @@ final class LibraryStore {
         items = (try? repository.fetchAll()) ?? []
         tagCounts = (try? repository.tagCounts()) ?? []
         categoryCounts = (try? repository.categoryCounts()) ?? []
-        let builtin = Set(CategoryPresets.builtin)
-        customCategories = categoryCounts.map(\.name).filter { !builtin.contains($0) }
+        customCategories = (try? repository.customCategories()) ?? []
     }
 
     private func loadSettings() {
         if let raw = settings.string(for: SettingsKey.watchDirectories), !raw.isEmpty {
-            watchDirectories = raw.split(separator: "\n").map { URL(fileURLWithPath: String($0)) }
+            watchDirectories = Self.decodeDirectories(raw)
+            dedupeWatchDirectories() // 清理历史遗留的重复目录
         }
         if let raw = settings.string(for: SettingsKey.browseMode), let mode = BrowseMode(rawValue: raw) {
             browseMode = mode
@@ -95,13 +95,89 @@ final class LibraryStore {
     }
 
     func saveSettings() {
-        settings.set(watchDirectories.map(\.path).joined(separator: "\n"), for: SettingsKey.watchDirectories)
+        settings.set(Self.encodeDirectories(watchDirectories), for: SettingsKey.watchDirectories)
         settings.set(browseMode.rawValue, for: SettingsKey.browseMode)
     }
 
     enum SettingsKey {
         static let watchDirectories = "watchDirectories"
         static let browseMode = "browseMode"
+    }
+
+    // MARK: - 扫描目录
+
+    /// 目录比较键。解析符号链接并抹平尾斜杠，让 `/a/Downloads`、`/a/Downloads/`、
+    /// 以及指向同一处的 `/System/Volumes/Data/...` 都算作同一个目录。
+    /// 不去重的话同一个目录会被加进来多次：重复扫描，还会让 `ForEach` 拿到重复 id。
+    private static func directoryKey(_ url: URL) -> String {
+        url.standardizedFileURL.resolvingSymlinksInPath().path
+    }
+
+    /// 便宜的路径归一化（不碰磁盘），用于逐条比对，避免上千次 I/O。
+    private static func normalizedPath(_ path: String) -> String {
+        URL(fileURLWithPath: path).standardizedFileURL.path
+    }
+
+    /// 路径理论上允许含换行符，`\n` 拼接读回来会被拆成两条，所以改用 JSON 数组。
+    private static func encodeDirectories(_ urls: [URL]) -> String {
+        let paths = urls.map(\.path)
+        guard let data = try? JSONEncoder().encode(paths),
+              let json = String(data: data, encoding: .utf8) else {
+            return paths.joined(separator: "\n") // 编码失败时退回旧格式
+        }
+        return json
+    }
+
+    /// 读取时兼容旧的换行分隔格式，老数据不会丢。
+    private static func decodeDirectories(_ raw: String) -> [URL] {
+        if let data = raw.data(using: .utf8),
+           let paths = try? JSONDecoder().decode([String].self, from: data) {
+            return paths.map { URL(fileURLWithPath: $0) }
+        }
+        return raw.split(separator: "\n", omittingEmptySubsequences: true)
+            .map { URL(fileURLWithPath: String($0)) }
+    }
+
+    /// 添加扫描目录；已存在同义目录时静默忽略。
+    func addWatchDirectory(_ url: URL) {
+        let key = Self.directoryKey(url)
+        guard !watchDirectories.contains(where: { Self.directoryKey($0) == key }) else { return }
+        watchDirectories.append(url)
+        saveSettings()
+    }
+
+    /// 移除扫描目录。只影响以后是否扫描它，**不会删除已入库的条目**。
+    func removeWatchDirectory(_ url: URL) {
+        let key = Self.directoryKey(url)
+        watchDirectories.removeAll { Self.directoryKey($0) == key }
+        saveSettings()
+    }
+
+    private func dedupeWatchDirectories() {
+        var seen = Set<String>()
+        var unique: [URL] = []
+        for directory in watchDirectories where seen.insert(Self.directoryKey(directory)).inserted {
+            unique.append(directory)
+        }
+        guard unique.count != watchDirectories.count else { return }
+        watchDirectories = unique
+        saveSettings()
+    }
+
+    /// 该目录下已入库的条目数。
+    func itemCount(in directory: URL) -> Int {
+        let prefix = Self.normalizedPath(directory.path)
+        return items.filter { item in
+            let path = Self.normalizedPath(item.path)
+            return path == prefix || path.hasPrefix(prefix + "/")
+        }.count
+    }
+
+    /// 目录当前是否还在（被删除或移动过就是 false）。
+    func directoryExists(_ url: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+        return exists && isDirectory.boolValue
     }
 
     var allCategories: [String] {
@@ -116,16 +192,55 @@ final class LibraryStore {
     func addCategory(_ name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !allCategories.contains(trimmed) else { return }
-        customCategories.append(trimmed)
+        do {
+            try repository.addCategory(trimmed)
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+        customCategories = (try? repository.customCategories()) ?? []
+    }
+
+    /// 该分类当前是否正被至少一个条目使用。
+    func isCategoryInUse(_ name: String) -> Bool {
+        categoryCounts.contains { $0.name == name && $0.count > 0 }
+    }
+
+    /// 分类能否删除：内置预设不可删；正被使用的不可删（和标签「还有人引用就留着」同理，
+    /// 删掉会让条目失去分类）。
+    func canDeleteCategory(_ name: String) -> Bool {
+        guard !CategoryPresets.builtin.contains(name) else { return false }
+        return !isCategoryInUse(name)
+    }
+
+    /// 删除一个未使用的自建分类。使用中的会被 `canDeleteCategory` 拦下。
+    func deleteCategory(_ name: String) {
+        guard canDeleteCategory(name) else { return }
+        do {
+            try repository.deleteCategory(name)
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+        customCategories = (try? repository.customCategories()) ?? []
     }
 
     // MARK: - 导入
 
-    func importFiles(_ urls: [URL]) async {
+    /// 返回真正新入库的条目数（已经导入过的不算）。
+    @discardableResult
+    func importFiles(_ urls: [URL]) async -> Int {
         let dmgURLs = urls.filter { $0.pathExtension.lowercased() == "dmg" }
         guard !dmgURLs.isEmpty else {
             errorMessage = "没有可导入的 .dmg 文件"
-            return
+            return 0
+        }
+
+        // 串行保护：两个导入并发跑会互相踩 isImporting / importTotal / importCompleted，
+        // 先结束的那个会把进度条提前关掉，数字也会乱跳。
+        guard !isImporting else {
+            errorMessage = "已有导入或扫描在进行中"
+            return 0
         }
 
         isImporting = true
@@ -150,7 +265,7 @@ final class LibraryStore {
 
         guard !addedIDs.isEmpty else {
             reload()
-            return
+            return 0
         }
 
         // 阶段 2：逐个挂载解析
@@ -165,6 +280,7 @@ final class LibraryStore {
 
         reload()
         await computeMissingHashes()
+        return addedIDs.count
     }
 
     /// 只把文件信息写入库，状态为 pending，不触发挂载解析。
@@ -236,15 +352,54 @@ final class LibraryStore {
         upsert(item)
     }
 
-    /// 扫描文件夹内的所有 DMG。
-    func scanFolder(_ folder: URL) async -> Int {
-        let urls = DMGScanner.scan(url: folder)
-        await importFiles(urls)
-        if !watchDirectories.contains(folder) {
-            watchDirectories.append(folder)
-            saveSettings()
+    /// 一次目录扫描的结果。区分「扫到多少」和「新增多少」——
+    /// 已经入库的文件会被跳过，两个数通常不一样。
+    struct ScanOutcome: Sendable {
+        let scanned: Int
+        let added: Int
+        /// 目录里的 .dmg 超过上限，没扫全。
+        let truncated: Bool
+    }
+
+    /// 扫描文件夹内的所有 DMG 并导入。
+    ///
+    /// 目录枚举放在后台线程：它是同步递归遍历整棵目录树，
+    /// 放在主线程（本类整体是 @MainActor）会一路卡住界面。
+    @discardableResult
+    func scanFolder(_ folder: URL) async -> ScanOutcome {
+        guard !isImporting else {
+            return ScanOutcome(scanned: 0, added: 0, truncated: false)
         }
-        return urls.count
+
+        let result = await Task.detached(priority: .utility) {
+            DMGScanner.scan(url: folder)
+        }.value
+
+        addWatchDirectory(folder)
+
+        // 一个都没有时不要走 importFiles，否则会弹「没有可导入的 .dmg 文件」这种误导性提示。
+        guard !result.urls.isEmpty else {
+            return ScanOutcome(scanned: 0, added: 0, truncated: result.truncated)
+        }
+
+        let added = await importFiles(result.urls)
+        return ScanOutcome(scanned: result.urls.count, added: added, truncated: result.truncated)
+    }
+
+    /// 依次扫描所有目录并汇总。期间 `isImporting` 为 true，可用来禁用按钮。
+    @discardableResult
+    func scanAllWatchDirectories() async -> ScanOutcome {
+        var scanned = 0
+        var added = 0
+        var truncated = false
+        // 快照一份再遍历：addWatchDirectory 可能改动数组，避免边遍历边改。
+        for directory in watchDirectories {
+            let outcome = await scanFolder(directory)
+            scanned += outcome.scanned
+            added += outcome.added
+            truncated = truncated || outcome.truncated
+        }
+        return ScanOutcome(scanned: scanned, added: added, truncated: truncated)
     }
 
     // MARK: - 更新
@@ -291,6 +446,7 @@ final class LibraryStore {
     private func reloadCounters() {
         tagCounts = (try? repository.tagCounts()) ?? []
         categoryCounts = (try? repository.categoryCounts()) ?? []
+        customCategories = (try? repository.customCategories()) ?? []
     }
 
     func item(id: Int64) -> DMGItem? {

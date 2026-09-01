@@ -2,8 +2,6 @@ import SwiftUI
 
 struct SidebarView: View {
     @Environment(LibraryStore.self) private var store
-    @State private var showNewCategory = false
-    @State private var newCategoryName = ""
 
     var body: some View {
         List(selection: Binding(
@@ -49,19 +47,7 @@ struct SidebarView: View {
                     .tag(SidebarSelection.category(category))
                 }
             } header: {
-                HStack {
-                    Text("分类")
-                    Spacer()
-                    Button {
-                        newCategoryName = ""
-                        showNewCategory = true
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.caption2)
-                    }
-                    .buttonStyle(.plain)
-                    .help("新建分类")
-                }
+                Text("分类")
             }
 
             if !store.tagCounts.isEmpty {
@@ -85,18 +71,6 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
-        .alert("新建分类", isPresented: $showNewCategory) {
-            TextField("分类名称", text: $newCategoryName)
-            Button("创建") {
-                store.addCategory(newCategoryName)
-                if !newCategoryName.isEmpty {
-                    store.selection = .category(newCategoryName.trimmingCharacters(in: .whitespacesAndNewlines))
-                }
-            }
-            Button("取消", role: .cancel) { }
-        } message: {
-            Text("分类代表「它是什么」；标签代表「它有什么属性」。")
-        }
     }
 
     /// 只显示有内容的分类，加上「未分类」，避免侧边栏过长。

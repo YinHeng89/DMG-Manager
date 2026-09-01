@@ -1,22 +1,38 @@
 import Foundation
 
+/// 一次目录扫描的结果。
+struct DMGScanResult: Sendable {
+    /// 扫描到的 .dmg 文件。
+    let urls: [URL]
+    /// 是否因为达到上限而提前停止。为 true 说明目录里还有没扫到的 .dmg。
+    let truncated: Bool
+}
+
 enum DMGScanner {
     /// 递归扫描文件夹里的所有 .dmg（跳过隐藏文件与包内容）。
-    static func scan(url: URL, limit: Int = 500) -> [URL] {
+    ///
+    /// 这是同步阻塞式遍历，调用方必须放到后台线程（例如 `Task.detached`），
+    /// 否则大目录会一路卡住主线程、界面直接冻住。
+    static func scan(url: URL, limit: Int = 500) -> DMGScanResult {
         let manager = FileManager.default
         guard let enumerator = manager.enumerator(
             at: url,
             includingPropertiesForKeys: [.isRegularFileKey],
             options: [.skipsHiddenFiles, .skipsPackageDescendants]
-        ) else { return [] }
+        ) else { return DMGScanResult(urls: [], truncated: false) }
 
         var results: [URL] = []
+        var truncated = false
         for case let fileURL as URL in enumerator {
             guard fileURL.pathExtension.lowercased() == "dmg" else { continue }
+            // 先判断再追加，这样恰好装下 limit 个时不会被误报为截断。
+            if results.count >= limit {
+                truncated = true
+                break
+            }
             results.append(fileURL)
-            if results.count >= limit { break }
         }
-        return results
+        return DMGScanResult(urls: results, truncated: truncated)
     }
 }
 

@@ -6,18 +6,36 @@ struct DetailPane: View {
     let item: DMGItem?
 
     var body: some View {
-        Group {
+        VStack(spacing: 0) {
             if let item {
+                // 选中态：固定头部钉在顶部，详情内容在下面滚动
                 DetailEditor(item: item)
                     .id(item.id) // 切换选中项时重建编辑状态
             } else {
-                ContentUnavailableView {
-                    Label("未选择安装包", systemImage: "opticaldisc")
-                } description: {
-                    Text("从中间列表里选一个 DMG，这里会显示它的全部信息。")
+                // 未选中态：提示在整列居中（和以前一致），固定顶栏作为覆盖层防止竖线穿透
+                ZStack(alignment: .top) {
+                    ContentUnavailableView {
+                        Label("未选择安装包", systemImage: "opticaldisc")
+                    } description: {
+                        Text("从中间列表里选一个 DMG，这里会显示它的全部信息。")
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                    DetailEmptyHeader()
                 }
             }
         }
+    }
+}
+
+/// 详情列未选中时的固定顶栏占位：与选中态等高、同材质，
+/// 让这一列顶部始终有固定内容，分栏竖线就不会往上穿透。
+/// 具体文字提示由下方居中的 ContentUnavailableView 承载。
+private struct DetailEmptyHeader: View {
+    var body: some View {
+        Color.clear
+            .frame(height: 64)
+            .background(.bar)
     }
 }
 
@@ -41,7 +59,6 @@ private struct DetailEditor: View {
     @State private var saveState: NoteSaveState = .idle
     @State private var saveTask: Task<Void, Never>?
     @State private var actionMessage: String?
-    @State private var showNewCategory = false
     @State private var newCategoryName = ""
 
     private let dmgTypes = [UTType.dmg]
@@ -52,21 +69,32 @@ private struct DetailEditor: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                header
-                if !item.exists { missingBanner }
-                actions
-                if item.parseStatus == .failed, let error = item.parseError { parseErrorBanner(error) }
-                metadataSection
-                noteSection
-                tagsSection
-                categorySection
-                if !relatedVersions.isEmpty { versionSection }
-                footerActions
+        VStack(spacing: 0) {
+            // 固定头部：钉在顶部，不随内容滚动（同时充当顶栏，避免分栏竖线穿透）
+            header
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(.bar)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    if !item.exists { missingBanner }
+                    actions
+                    if item.parseStatus == .failed, let error = item.parseError { parseErrorBanner(error) }
+                    metadataSection
+                    noteSection
+                    tagsSection
+                    categorySection
+                    if !relatedVersions.isEmpty { versionSection }
+                    footerActions
+                }
+                .padding(20)
             }
-            .padding(20)
+            .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
         }
+        .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
         .safeAreaInset(edge: .bottom) {
             if let actionMessage {
                 Text(actionMessage)
@@ -118,17 +146,17 @@ private struct DetailEditor: View {
     // MARK: - 头部
 
     private var header: some View {
-        HStack(alignment: .top, spacing: 14) {
-            AppIconView(filename: item.iconFilename, size: 72)
+        HStack(alignment: .center, spacing: 12) {
+            AppIconView(filename: item.iconFilename, size: 44)
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 3) {
                 TextField("显示名称", text: $draft.displayName)
                     .textFieldStyle(.plain)
-                    .font(.title2.weight(.semibold))
+                    .font(.title3.weight(.semibold))
                     .onSubmit { save() }
                     .onChange(of: draft.displayName) { scheduleSave() }
 
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     if let version = item.version, !version.isEmpty {
                         Text("版本 \(version)")
                     }
@@ -137,25 +165,27 @@ private struct DetailEditor: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                .font(.callout)
+                .font(.caption)
 
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     ArchitectureBadge(architecture: item.architecture)
                     StatusBadge(item: item)
                 }
-
-                Button {
-                    draft.favorite.toggle()
-                    save()
-                } label: {
-                    Label(draft.favorite ? "已收藏" : "收藏",
-                          systemImage: draft.favorite ? "star.fill" : "star")
-                }
-                .buttonStyle(.borderless)
-                .foregroundStyle(draft.favorite ? .yellow : .secondary)
             }
+            .frame(minWidth: 0)
 
-            Spacer()
+            Spacer(minLength: 8)
+
+            Button {
+                draft.favorite.toggle()
+                save()
+            } label: {
+                Image(systemName: draft.favorite ? "star.fill" : "star")
+                    .font(.system(size: 15))
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(draft.favorite ? .yellow : .secondary)
+            .help(draft.favorite ? "取消收藏" : "收藏")
         }
     }
 
@@ -206,8 +236,13 @@ private struct DetailEditor: View {
 
     // MARK: - 操作按钮
 
+    /// 操作按钮排。
+    ///
+    /// 用 FlowLayout 而不是 HStack：HStack 里 6 个 58pt 固定宽按钮会形成
+    /// ≈400pt 的「硬最小宽度」，详情列压不下去；空间一紧张 NSSplitView 就会
+    /// 自动折叠侧边栏，布局直接崩。换成流式布局后窄宽度自动换行。
     private var actions: some View {
-        HStack(spacing: 8) {
+        FlowLayout(spacing: 8) {
             ActionButton("打开", symbol: "arrow.up.forward.square") { store.open(item) }
             ActionButton("Finder", symbol: "folder") { store.revealInFinder(item) }
             if store.mountedVolumes[item.id] != nil {
@@ -344,7 +379,7 @@ private struct DetailEditor: View {
                     Image(systemName: "plus")
                         .font(.caption2.weight(.medium))
                         .foregroundStyle(.secondary)
-                    TextField("添加标签，回车确认", text: $newTag)
+                    TextField("添加标签", text: $newTag)
                         .textFieldStyle(.plain)
                         .onSubmit(addTag)
                 }
@@ -401,6 +436,15 @@ private struct DetailEditor: View {
         save()
     }
 
+    /// 只有自建分类（在分类词表里）才提供删除，内置预设不显示删除按钮。
+    private func isCustomCategory(_ name: String) -> Bool {
+        store.customCategories.contains(name)
+    }
+
+    private func deleteCategory(_ name: String) {
+        withAnimation { store.deleteCategory(name) }
+    }
+
     // MARK: - 分类
 
     private var categorySection: some View {
@@ -408,58 +452,46 @@ private struct DetailEditor: View {
             SectionHeader(title: "分类", symbol: "folder")
             FlowLayout(spacing: 6) {
                 ForEach(store.allCategories, id: \.self) { category in
-                    Button {
-                        draft.category = category
-                        save()
-                    } label: {
-                        HStack(spacing: 4) {
-                            if draft.category == category {
-                                Image(systemName: "checkmark")
-                                    .font(.caption2.weight(.bold))
-                            }
-                            Text(category)
-                        }
-                        .font(.caption)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                        .background(
-                            draft.category == category
-                                ? Color.accentColor.opacity(0.18)
-                                : Color.primary.opacity(0.06),
-                            in: Capsule()
-                        )
-                        .foregroundStyle(draft.category == category ? Color.accentColor : .primary)
-                    }
-                    .buttonStyle(.plain)
+                    CategoryChip(
+                        name: category,
+                        isSelected: draft.category == category,
+                        onSelect: {
+                            draft.category = category
+                            save()
+                        },
+                        onDelete: isCustomCategory(category) ? { deleteCategory(category) } : nil,
+                        blockedReason: store.isCategoryInUse(category)
+                            ? "有条目正在使用这个分类，不能删除"
+                            : nil
+                    )
                 }
 
-                Button {
-                    showNewCategory = true
-                } label: {
+                // 和「添加标签」保持同一套交互：行内输入、回车即建，不弹模态框。
+                HStack(spacing: 4) {
                     Image(systemName: "plus")
-                        .font(.caption)
-                    Text("新建")
-                        .font(.caption)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    TextField("新建分类", text: $newCategoryName)
+                        .textFieldStyle(.plain)
+                        .onSubmit(addNewCategory)
                 }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
+                .font(.caption)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
                 .background(Color.primary.opacity(0.06), in: Capsule())
+                .frame(minWidth: 132)
             }
         }
-        .alert("新建分类", isPresented: $showNewCategory) {
-            TextField("分类名称", text: $newCategoryName)
-            Button("创建") {
-                let name = newCategoryName.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !name.isEmpty else { return }
-                store.addCategory(name)
-                draft.category = name
-                save()
-            }
-            Button("取消", role: .cancel) { }
-        } message: {
-            Text("分类代表「它是什么」；标签代表「它有什么属性」。")
-        }
+    }
+
+    /// 回车即建：分类不存在时先加进词表，然后直接赋给当前条目。
+    private func addNewCategory() {
+        let name = newCategoryName.trimmingCharacters(in: .whitespacesAndNewlines)
+        newCategoryName = ""
+        guard !name.isEmpty else { return }
+        store.addCategory(name) // 已存在时内部会忽略
+        draft.category = name
+        save()
     }
 
     // MARK: - 版本库

@@ -139,6 +139,20 @@ final class ItemRepository {
         _ = try? database.run("DELETE FROM tags WHERE id NOT IN (SELECT DISTINCT tag_id FROM dmg_tags);")
     }
 
+    /// 用户自建的分类词表（不依赖 dmg_items，包含尚未分配给任何条目的分类）。
+    func customCategories() throws -> [String] {
+        let rows = try database.query("SELECT name FROM categories ORDER BY name COLLATE NOCASE;")
+        return rows.compactMap { $0["name"]?.stringValue }
+    }
+
+    func addCategory(_ name: String) throws {
+        try database.run("INSERT OR IGNORE INTO categories(name) VALUES(?);", bindings: [.value(name)])
+    }
+
+    func deleteCategory(_ name: String) throws {
+        try database.run("DELETE FROM categories WHERE name = ?;", bindings: [.value(name)])
+    }
+
     func categoryCounts() throws -> [(name: String, count: Int)] {
         let rows = try database.query("""
             SELECT category AS name, COUNT(*) AS count

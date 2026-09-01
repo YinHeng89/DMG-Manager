@@ -62,7 +62,11 @@ struct StatusBadge: View {
     private func badge(_ text: String, symbol: String, color: Color) -> some View {
         HStack(spacing: 4) {
             Image(systemName: symbol)
+            // 「旧版本 · 已装 26.825.5151」这类长文本必须能截断，
+            // 否则它会撑出行的硬最小宽度，列表列就压不下去。
             Text(text)
+                .lineLimit(1)
+                .truncationMode(.tail)
         }
         .font(.caption2)
         .foregroundStyle(color)
@@ -120,6 +124,59 @@ struct TagChip: View {
             in: Capsule()
         )
         .foregroundStyle((onRemove != nil && hovered) ? Color.accentColor : .primary)
+        .onHover { hovered = $0 }
+        .animation(.easeInOut(duration: 0.12), value: hovered)
+    }
+}
+
+/// 分类小胶囊：点名字把它分配给当前条目，点 × 删掉这个自建分类。
+///
+/// 删除规则和标签一致——还有条目在用就不许删，避免出现没有分类的条目；
+/// 内置预设分类不属于词表，不显示删除按钮。
+struct CategoryChip: View {
+    let name: String
+    let isSelected: Bool
+    var onSelect: () -> Void
+    /// 为 nil 表示该分类不可删除（内置预设），不显示删除按钮。
+    var onDelete: (() -> Void)?
+    /// 非 nil 表示「正在使用中」，删除按钮显示为不可点，并在悬停时说明原因。
+    var blockedReason: String?
+
+    @State private var hovered = false
+
+    private var canDelete: Bool { onDelete != nil && blockedReason == nil }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if isSelected {
+                Image(systemName: "checkmark")
+                    .font(.caption2.weight(.bold))
+            }
+
+            Button(action: onSelect) {
+                Text(name)
+            }
+            .buttonStyle(.plain)
+
+            if onDelete != nil {
+                Button { onDelete?() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .bold))
+                }
+                .buttonStyle(.plain)
+                .disabled(!canDelete)
+                .opacity(canDelete ? (hovered ? 1 : 0.5) : 0.25)
+                .help(canDelete ? "删除分类「\(name)」" : (blockedReason ?? ""))
+            }
+        }
+        .font(.caption)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .background(
+            isSelected ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.06),
+            in: Capsule()
+        )
+        .foregroundStyle(isSelected ? Color.accentColor : .primary)
         .onHover { hovered = $0 }
         .animation(.easeInOut(duration: 0.12), value: hovered)
     }
