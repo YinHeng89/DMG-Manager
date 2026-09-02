@@ -68,6 +68,19 @@ final class LibraryStore {
     var mountedVolumes: [Int64: URL] = [:]
 
     // MARK: - 派生数据缓存
+    //
+    // ⚠️ 这六个字段全部必须标 @ObservationIgnored，缺一个就可能崩溃。
+    //
+    // 原因：它们是「惰性写入」的缓存。filteredItems / displayedItems / versionGroups /
+    // duplicateGroups 这些派生属性都写成「缓存为空才现算，算完写回缓存」，而它们全部是在
+    // SwiftUI 的 body 求值期间被访问的（例如 ItemListView.makeRow 里调 versionCount(for:)）。
+    // 缓存一旦参与观察，这次写回就会走 withMutation → ObservationCenter.invalidate →
+    // 立刻发起一次新的视图更新事务；而此刻正处在渲染事务中途，SwiftUI 判定为非法重入，
+    // 直接 AG::precondition_failure → abort()（本次崩溃的直接原因）。
+    //
+    // 标成 @ObservationIgnored 后写缓存不再发通知，不会在渲染中途触发二次事务；缓存本来就
+    // 是实现细节，没有视图需要观察它——视图真正依赖的 items / searchText / selection 等
+    // 依然正常通知，失效由 invalidateDerivedState() 统一负责。
 
     /// `filteredItems` 的缓存。过滤 + 排序每次访问都要全量重算（比较器用 localizedCompare，
     /// 比普通字符串比较贵一个量级），而一次渲染会被访问三四次（isEmpty / count / ForEach），
@@ -75,12 +88,12 @@ final class LibraryStore {
     ///
     /// 放在这里而不是过滤逻辑所在的 LibraryFiltering.swift，是因为 Swift 不允许在
     /// extension 里写存储属性。
-    var filteredItemsCache: [DMGItem]?
-    var filteredItemsDirty = true
+    @ObservationIgnored var filteredItemsCache: [DMGItem]?
+    @ObservationIgnored var filteredItemsDirty = true
 
     /// `displayedItems` 的缓存，同一渲染周期会被访问多次。
-    var displayedItemsCache: [DMGItem]?
-    var displayedItemsDirty = true
+    @ObservationIgnored var displayedItemsCache: [DMGItem]?
+    @ObservationIgnored var displayedItemsDirty = true
 
     /// groupingKey → 该软件的全部版本（已按「最新优先」排好序）。
     ///
@@ -89,11 +102,11 @@ final class LibraryStore {
     /// items 重新扫一遍并排序——选中切换一多就是 N 次 O(n log n)。
     /// 和 `filteredItemsCache` 一样放在主类型里（extension 不能写存储属性），
     /// 读它的是 LibraryFiltering.swift 里的分组逻辑，所以不能是 private。
-    var groupIndexCache: [String: [DMGItem]]?
+    @ObservationIgnored var groupIndexCache: [String: [DMGItem]]?
 
     /// `duplicateGroups()` 的缓存。侧边栏每次 body 都要问一次重复数，
     /// 不缓存等于每次重绘都重扫全表。
-    var duplicateGroupsCache: [[DMGItem]]?
+    @ObservationIgnored var duplicateGroupsCache: [[DMGItem]]?
 
     /// 所有派生缓存的统一失效点：items 变了、或者任何影响列表的输入变了都要走这里。
     private func invalidateDerivedState() {
