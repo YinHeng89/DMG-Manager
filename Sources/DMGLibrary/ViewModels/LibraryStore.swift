@@ -434,6 +434,18 @@ final class LibraryStore {
         await resolveInstallStatus(for: &item)
         item.updatedAt = Date()
         try? repository.update(item)
+        // 分类属于软件维度，得单独落库（update 不碰 software 表，见那里的说明）；
+        // 且只在软件还是「未分类」时才写，不覆盖用户已经设好的分类。
+        if item.category != CategoryPresets.uncategorized {
+            try? repository.applyAutoCategory(item.category, forSoftwareKey: item.groupingKey)
+        }
+        // 解析出 bundle_id 后键会并到已有软件上（此时自己那份旧数据是空的）。
+        // 必须用合并后的共享值刷新内存，否则选中这个包看到的备注和同组其它版本不一致。
+        if let shared = repository.softwareMetadata(forKey: item.groupingKey) {
+            item.note = shared.note
+            item.category = shared.category
+            item.tags = shared.tags
+        }
         upsert(item)
     }
 
@@ -528,11 +540,20 @@ final class LibraryStore {
     }
 
     /// 只保存用户编辑的元数据，不动解析结果。
+    ///
+    /// 名称与收藏属于这个包，备注 / 分类 / 标签属于整个软件——后者落库后要把同组
+    /// 其它版本的内存副本一起刷新，否则从「版本库」切过去看到的还是旧值。
     func saveMetadata(_ item: DMGItem) {
         var updated = item
         updated.updatedAt = Date()
         do {
             try repository.updateMetadata(updated)
+            let key = updated.groupingKey
+            for index in items.indices where items[index].groupingKey == key {
+                items[index].note = updated.note
+                items[index].category = updated.category
+                items[index].tags = updated.tags
+            }
             upsert(updated)
             reloadCounters()
         } catch {
@@ -582,6 +603,9 @@ final class LibraryStore {
         }
         items.removeAll { ids.contains($0.id) }
         SearchCache.shared.prune(keeping: Set(items.map(\.id)))
+        // 删掉某个软件的最后一个版本时，连带清掉它的软件记录（备注等也就没有附着对象了）。
+        // 只删其中一个版本时软件记录会留下，所以备注不会跟着消失。
+        repository.pruneOrphanSoftware()
         invalidateDerivedState()
         if let selectedItemID, ids.contains(selectedItemID) { self.selectedItemID = nil }
         reloadCounters()
