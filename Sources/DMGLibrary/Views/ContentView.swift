@@ -250,32 +250,23 @@ struct ContentView: View {
 /// 中间列：固定顶栏 + 列表 / 图标视图 + 导入进度 + 空状态 + 底部状态栏。
 struct BrowserPane: View {
     @Environment(LibraryStore.self) private var store
+    /// 上方横幅（导入中 / 扫库结果）的实际高度。横幅以浮层形式盖在列表顶部，
+    /// 高度通过 `BannerHeightKey` 量出来后回填到这里，再传给列表的 `topInset`，
+    /// 给滚动内容留等高的顶部边距。关键是：横幅的显隐不再改变 `ScrollView` 的
+    /// 裁剪框尺寸——否则 macOS 上 `NSScrollView` 命中测试会滞后用旧几何，
+    /// 表现为「横幅消失后点列表整行错位一个横幅高度、点不到目标」。
+    @State private var bannerHeight: CGFloat = 0
 
     var body: some View {
         VStack(spacing: 0) {
             // 顶栏常驻：既展示当前分组/筛选状态，也让这一列顶部始终有固定内容
             BrowserHeaderBar()
 
-            if store.isImporting {
-                ImportProgressBanner()
-                Divider()
+            ZStack(alignment: .top) {
+                listLayer
+                bannerLayer
             }
-
-            if let scan = store.lastScanResult, scan.scanned > 0 {
-                ScanResultBanner(result: scan)
-                Divider()
-            }
-
-            if store.displayedItems.isEmpty {
-                EmptyStateView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if store.browseMode == .list {
-                ItemListView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ItemGridView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
+            .onPreferenceChange(BannerHeightKey.self) { bannerHeight = $0 }
 
             // 状态栏作为普通子视图，而不是 safeAreaInset：
             // safeAreaInset 会改写这一列的安全区，拖动分栏时容易和分栏的安全区计算打架。
@@ -284,6 +275,51 @@ struct BrowserPane: View {
             // 否则用户看到的条目数和总大小对不上。
             StatusBarView(items: store.displayedItems)
         }
+    }
+
+    @ViewBuilder
+    private var listLayer: some View {
+        if store.displayedItems.isEmpty {
+            EmptyStateView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if store.browseMode == .list {
+            ItemListView(topInset: bannerHeight)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ItemGridView(topInset: bannerHeight)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    /// 横幅浮层：盖在列表上方，不参与列内布局（不会撑大/缩小 `ScrollView` 的裁剪框）。
+    /// 用 `.background` 的 `GeometryReader` 量出自身高度回填 `bannerHeight`。
+    @ViewBuilder
+    private var bannerLayer: some View {
+        VStack(spacing: 0) {
+            if store.isImporting {
+                ImportProgressBanner()
+                Divider()
+            }
+            if let scan = store.lastScanResult, scan.scanned > 0 {
+                ScanResultBanner(result: scan)
+                Divider()
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .background(.bar)
+        .background(
+            GeometryReader { geo in
+                Color.clear.preference(key: BannerHeightKey.self, value: geo.size.height)
+            }
+        )
+    }
+}
+
+/// 量取上方横幅高度的偏好键。
+private struct BannerHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat { 0 }
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 

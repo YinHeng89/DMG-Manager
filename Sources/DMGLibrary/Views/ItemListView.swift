@@ -15,6 +15,12 @@ import SwiftUI
 /// 其余版本在详情的「版本库」里切换。
 struct ItemListView: View {
     @Environment(LibraryStore.self) private var store
+    /// 顶部留白：导入 / 扫库提示横幅以「浮层」形式盖在列表上方，
+    /// 这里只给滚动内容加等高的顶部边距，让行不被横幅遮住——
+    /// 用 `contentMargins` 而不是 `.padding`：前者只改滚动内容内边距、不动
+    /// `NSScrollView` 的裁剪框，避免裁剪框 resize 触发 macOS 命中测试用旧几何
+    /// （表现为横幅消失后点列表整行错位一个横幅高度）。
+    var topInset: CGFloat = 0
     /// 列表里点的这一下，目标一定已经可见，不需要滚动定位；用这个标记跳过随后的 scrollTo。
     @State private var suppressScroll = false
     /// 待确认删除的条目 ID 集合：Delete 键或右键「从资料库移除」先暂存到这里，
@@ -41,6 +47,7 @@ struct ItemListView: View {
                 }
                 .padding(.vertical, 4)
             }
+            .contentMargins(.top, topInset)
             // 外部（搜索、菜单栏、详情里的版本跳转）改选中项时滚动到可见区域
             .onChange(of: store.selectedItemID) { _, newID in
                 guard let newID else { return }
@@ -234,6 +241,8 @@ struct ItemRow: View {
 
 struct ItemGridView: View {
     @Environment(LibraryStore.self) private var store
+    /// 与 ItemListView.topInset 同义：顶部浮层横幅的等高留白。
+    var topInset: CGFloat = 0
 
     private let columns = [GridItem(.adaptive(minimum: 150, maximum: 220), spacing: 18)]
 
@@ -262,6 +271,7 @@ struct ItemGridView: View {
             }
             .padding(16)
         }
+        .contentMargins(.top, topInset)
     }
 }
 
