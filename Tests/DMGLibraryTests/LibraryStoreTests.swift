@@ -160,7 +160,7 @@ final class LibraryStoreTests: XCTestCase {
     }
 
     func testMissingFileDetection() throws {
-        var item = try add("Ghost.dmg", appName: "Ghost", version: "1.0",
+        let item = try add("Ghost.dmg", appName: "Ghost", version: "1.0",
                            bundleID: "com.example.ghost", architecture: .appleSilicon)
         XCTAssertTrue(item.exists)
 
@@ -319,18 +319,25 @@ final class LibraryStoreTests: XCTestCase {
         XCTAssertEqual(store.displayedItems.first?.id, older.id)
     }
 
-    /// 按标签筛选命中旧版本，同上。
-    func testTagFilterHitOnOldVersionStaysVisible() throws {
+    /// 标签在 v4 起属于「软件」维度：给某个软件打标签会同时作用于它的全部版本，
+    /// 因此「按标签筛选」不会把该软件折叠消失（这正是 P0-3 回归要守的：过滤不能吞掉分组）。
+    func testTagFilterKeepsGroupVisible() throws {
         _ = try add("Chrome_139.dmg", appName: "Google Chrome", version: "139.0",
                     bundleID: "com.google.Chrome", architecture: .appleSilicon)
-        let older = try add("Chrome_138.dmg", appName: "Google Chrome", version: "138.0",
-                            bundleID: "com.google.Chrome", architecture: .appleSilicon,
-                            tags: ["留着备用"])
+        _ = try add("Chrome_138.dmg", appName: "Google Chrome", version: "138.0",
+                    bundleID: "com.google.Chrome", architecture: .appleSilicon)
+
+        // 给这个软件打标签（两个版本共享）
+        let older = store.items.first { $0.version == "138.0" }!
+        var tagged = older
+        tagged.tags = ["留着备用"]
+        store.saveMetadata(tagged)
 
         store.selection = .tag("留着备用")
-        XCTAssertEqual(store.filteredItems.count, 1)
-        XCTAssertEqual(store.displayedItems.count, 1)
-        XCTAssertEqual(store.displayedItems.first?.id, older.id)
+        // 两个版本都带标签 → 过滤后该组仍有一条代表项（不被折叠吞掉）
+        XCTAssertEqual(store.filteredItems.count, 2)
+        XCTAssertEqual(store.displayedItems.count, 1, "有标签的软件分组不能被过滤吞掉")
+        XCTAssertEqual(store.displayedItems.first?.version, "139.0")
     }
 
     // MARK: - 回归：自定义显示名持久化（P0-2）

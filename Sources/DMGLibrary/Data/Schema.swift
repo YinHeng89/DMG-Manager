@@ -237,7 +237,14 @@ enum Schema {
         Int((try? database.query("PRAGMA user_version;"))?.first?["user_version"]?.intValue ?? 0)
     }
 
+    // 迁移期只会对这些已知表做表结构探测；表名拼进 PRAGMA 前先过白名单，
+    // 杜绝任何非预期来源拼出的表名进入 SQL（纵深防御，当前调用方只传字面量）。
+    private static let allowedTables: Set<String> = [
+        "dmg_items", "tags", "dmg_tags", "categories", "software", "software_tags", "settings"
+    ]
+
     private static func columnExists(_ column: String, in table: String, database: Database) -> Bool {
+        guard allowedTables.contains(table) else { return false }
         guard let rows = try? database.query("PRAGMA table_info(\(table));") else { return false }
         return rows.contains { $0["name"]?.stringValue == column }
     }

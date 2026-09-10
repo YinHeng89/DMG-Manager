@@ -72,13 +72,14 @@ final class ItemRepository {
         "parse_status", "parse_error", "last_opened_at", "created_at", "updated_at"
     ]
 
+    private static let insertSQL = """
+    INSERT INTO dmg_items (\(writableColumns.joined(separator: ", ")))
+    VALUES (\(placeholders));
+    """
+
     @discardableResult
     func insert(_ item: inout DMGItem) throws -> Int64 {
-        let sql = """
-        INSERT INTO dmg_items (\(Self.writableColumns.joined(separator: ", ")))
-        VALUES (\(Self.placeholders));
-        """
-        let id = try database.run(sql, bindings: item.insertBindings())
+        let id = try database.run(Self.insertSQL, bindings: item.insertBindings())
         item.id = id
         // 新包还没有 bundle_id，groupingKey 只能按文件名算；先占一个软件记录。
         // 解析完成后 syncSoftwareKey 会把这条数据搬到真正的软件键上。
@@ -93,6 +94,21 @@ final class ItemRepository {
             try setTags(softwareKey: item.groupingKey, tags: item.tags)
         }
         return id
+    }
+
+    /// 查重 + 插入：同一 `path` 已入库则直接返回已有 id（不重复写库）。
+    ///
+    /// 让「导入幂等」由仓储层保证，而不是散落在调用方各自 `itemID(forPath:)` 再 `insert`。
+    /// 单连接 `FULLMUTEX` 串行化保证「查 + 插」之间不会被其它线程插入同 path，
+    /// 且 `dmg_items.path` 有 `UNIQUE` 约束兜底——并发导入两批同一文件也只会成功一条。
+    /// 注意这里**不**再开事务：`setTags` 内部自带事务，嵌套会触发 SQLite 报错。
+    @discardableResult
+    func insertIfAbsent(_ item: inout DMGItem) throws -> Int64? {
+        if let existing = try itemID(forPath: item.path), existing > 0 {
+            return existing
+        }
+        try insert(&item)
+        return item.id
     }
 
     func update(_ item: DMGItem) throws {

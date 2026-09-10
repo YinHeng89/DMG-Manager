@@ -91,29 +91,36 @@ final class DatabaseTests: XCTestCase {
     }
 
     func testDeleteRemovesTagRelations() throws {
+        // v4 起标签写入 software_tags；删除最后一个版本后软件记录被清理，相关标签关系也应解绑。
         var item = DMGItem.sample(id: 0)
+        item.bundleID = "com.example.delete"
         item.tags = ["浏览器"]
         try repository.insert(&item)
         try repository.delete(id: item.id)
+        repository.pruneOrphanSoftware()
 
         XCTAssertTrue(try repository.fetchAll().isEmpty)
-        let leftover = try database.query("SELECT COUNT(*) AS c FROM dmg_tags;")
+        let leftover = try database.query("SELECT COUNT(*) AS c FROM software_tags;")
         XCTAssertEqual(leftover.first?["c"]?.intValue, 0)
     }
 
     func testOrphanTagsArePruned() throws {
+        // 注意：v4 起标签属于软件维度（按 groupingKey）。给 a / b 不同的 bundleID，
+        // 让它们是两个独立的软件，否则会共用同一 software_key，b 入库时会把 a 的标签覆盖掉。
         var a = DMGItem.sample(id: 0)
         a.path = "/tmp/A.dmg"; a.filename = "A.dmg"
+        a.bundleID = "com.example.a"
         a.tags = ["临时", "共享"]
         try repository.insert(&a)
 
         var b = DMGItem.sample(id: 0)
         b.path = "/tmp/B.dmg"; b.filename = "B.dmg"
+        b.bundleID = "com.example.b"
         b.tags = ["共享"]
         try repository.insert(&b)
 
-        // 把「临时」从它唯一的条目 A 上移除
-        try repository.setTags(itemID: a.id, tags: ["共享"])
+        // 把「临时」从它唯一的软件 A 上移除（标签已上移到软件维度，按 groupingKey 操作）
+        try repository.setTags(softwareKey: a.groupingKey, tags: ["共享"])
 
         let tags = try repository.tagCounts()
         XCTAssertNil(tags.first { $0.name == "临时" }, "无引用的标签应被自动清理")

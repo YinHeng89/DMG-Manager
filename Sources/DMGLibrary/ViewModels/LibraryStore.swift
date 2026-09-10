@@ -359,10 +359,6 @@ final class LibraryStore {
     private func addPlaceholder(_ url: URL) async -> DMGItem? {
         let repository = self.repository
         let created = await Task.detached(priority: .userInitiated) { () -> DMGItem? in
-            if (try? repository.itemID(forPath: url.path)) != nil {
-                return nil // 已经导入过
-            }
-
             let facts = FileFactsReader.read(url: url)
             var item = DMGItem(
                 path: url.path,
@@ -378,11 +374,12 @@ final class LibraryStore {
             )
 
             do {
-                try repository.insert(&item)
+                guard let id = try repository.insertIfAbsent(&item) else { return nil }
+                item.id = id
+                return item
             } catch {
                 return nil
             }
-            return item
         }.value
 
         guard let item = created else { return nil }
@@ -803,13 +800,22 @@ final class LibraryStore {
             try DiskImageService.attach(imageURL: item.fileURL)
         }.value
         defer {
-            if mountedVolumes[item.id] == nil {
+            // 安装挂载的卷必须卸掉。注意：只能用「安装这次的挂载点」判断，
+            // 不能像 mount() 那样看 mountedVolumes[id] 是否为 nil——用户可能先手动挂过
+            // 同一个 DMG，那时 mountedVolumes[id] 已被占用（是不同的挂载点），若这里判断
+            // 它非 nil 就不卸，本次安装的挂载点就会被漏卸，留下僵尸挂载。
+            if mountedVolumes[item.id] != volume.mountPoint {
                 DiskImageService.detach(mountPoint: volume.mountPoint)
             }
         }
         let appURL = volume.mountPoint.appendingPathComponent(relativePath)
         let destination = URL(fileURLWithPath: "/Applications")
             .appendingPathComponent(appURL.lastPathComponent)
+        // 文案承诺「已存在的同名 App 会先移到废纸篓」：先真正进废纸篓（可恢复），
+        // 再拷新版本，与界面提示一致；避免 replaceItemAt 直接删除旧 App 造成困惑/不可恢复。
+        if FileManager.default.fileExists(atPath: destination.path) {
+            try? FileManager.default.trashItem(at: destination, resultingItemURL: nil)
+        }
         // 原子替换：先拷到临时名，再用 replaceItemAt 替换。复制中途失败（磁盘满 / 权限）
         // 时原 App 还在，不会像「先 trash 旧 App 再 copy 新」那样把用户已有的 App 弄丢。
         let staging = destination.deletingLastPathComponent()
@@ -817,9 +823,12 @@ final class LibraryStore {
         try FileManager.default.copyItem(at: appURL, to: staging)
         _ = try? FileManager.default.replaceItemAt(destination, withItemAt: staging)
 
-        // 刚装好的 App 还没进 InstalledAppService 的缓存：先强制重新扫描，
+        // 刚装好的 App 还没进 InstalledAppService 的缓存：先在后台强制重新扫描，
         // 否则 resolve 扫不到 → installedVersion 仍是 nil → 安装状态徽章不刷新。
-        InstalledAppService.shared.rebuild()
+        // 必须在后台跑，扫描 /Applications 可能很慢，放主线程会卡界面。
+        await Task.detached(priority: .utility) {
+            InstalledAppService.shared.rebuild()
+        }.value
 
         var updated = item
         await resolveInstallStatus(for: &updated)

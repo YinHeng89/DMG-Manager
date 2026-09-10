@@ -76,7 +76,12 @@ enum AppBundleInspector {
             architecture = .unknown
         }
 
-        let relativePath = appURL.path.replacingOccurrences(of: mountPoint.path, with: "")
+        // 只剥掉「挂载根路径」这个前缀（不能用 replacingOccurrences 全局替换：
+        // 万一挂载根路径的片段在更深层路径里也出现，会误伤相对路径）。
+        let prefix = mountPoint.path
+        let relativePath = (appURL.path.hasPrefix(prefix)
+            ? String(appURL.path.dropFirst(prefix.count))
+            : appURL.path.replacingOccurrences(of: prefix, with: ""))
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
 
         return AppInfo(

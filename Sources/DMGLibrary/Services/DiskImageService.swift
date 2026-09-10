@@ -71,6 +71,24 @@ enum DiskImageService {
         process.waitUntilExit()
     }
 
+    /// 清掉上次运行残留的挂载。
+    ///
+    /// hdiutil 挂载是系统级、跨进程存活的：App 崩溃 / 被强杀时，挂载点并不会随进程消失，
+    /// 会一直挂在 `-mountrandom` 指定的 `mountRoot` 下，既占着原 DMG 的只读锁，又让挂载
+    /// 根目录里的僵尸目录越积越多。启动时和退出前各扫一遍，把这里面的卷全部强卸即可
+    /// （已卸掉的会报错，被 `try?` 忽略，无副作用）。
+    static func detachStaleMounts() {
+        let root = URL(fileURLWithPath: mountRoot)
+        let contents = (try? FileManager.default.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+        for url in contents where (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+            detach(mountPoint: url)
+        }
+    }
+
     private static var mountRoot: String {
         let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("DMGLibraryMounts")
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)

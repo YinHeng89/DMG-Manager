@@ -218,8 +218,14 @@ private struct DataSettingsTab: View {
             Section {
                 HStack {
                     Button(prefs.t("settings.backupNow")) {
-                        BackupService.snapshot(database: AppPaths.database)
-                        showBackupDone = true
+                        // 备份走 VACUUM INTO，库大时可能要几百毫秒；放后台跑，
+                        // 否则会卡住设置窗口。完成后回到主线程点亮「已备份」标记。
+                        Task {
+                            await Task.detached(priority: .utility) {
+                                BackupService.snapshot(database: AppPaths.database)
+                            }.value
+                            showBackupDone = true
+                        }
                     }
                     if showBackupDone {
                         Label(prefs.t("settings.backedUp"), systemImage: "checkmark.circle.fill")

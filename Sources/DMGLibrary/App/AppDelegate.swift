@@ -21,11 +21,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // 先清掉上次运行残留的 hdiutil 挂载（崩溃 / 被强杀会跨启动存活），
+        // 否则僵尸卷会越积越多、还一直占着原 DMG 的只读锁。
+        DiskImageService.detachStaleMounts()
         // 让主窗口在「打开方式」冷启动时也能正常出现
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         // 部分启动路径下事件此时才落到 currentAppleEvent，再兜一次
         Self.collectFromCurrentAppleEvent()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // 优雅退出时把这次运行挂载的卷一并卸掉，避免留下僵尸挂载。
+        DiskImageService.detachStaleMounts()
     }
 
     private static func installOpenDocumentsHandler(_ target: AppDelegate) {
